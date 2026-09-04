@@ -1,0 +1,74 @@
+{% extends "_shell.html" %}
+{% block title %}Broadcast — Control Panel{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow">Announce</p>
+    <h1>Broadcast</h1>
+  </div>
+</header>
+
+<p class="panel-sub reveal" style="--delay: 20ms">Send a message or embed to any channel the bot can post in, straight from here.</p>
+
+{% if not bot_online %}
+<section class="panel reveal"><p class="panel-sub">Bot is offline — connect it to send a broadcast.</p></section>
+{% else %}
+<section class="panel reveal" style="--delay: 40ms">
+  <form method="post" action="{{ url_for('broadcast_send') }}" class="stack-form" id="broadcast-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label>Server
+      <select id="guild-select">
+        <option value="">Select a server…</option>
+        {% for g in guild_list %}
+        <option value="{{ g.id }}">{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Channel
+      <select name="channel_id" id="channel-select" disabled>
+        <option value="">Select a server first…</option>
+      </select>
+    </label>
+
+    <label>Title <span class="muted small">(optional — sends as an embed if set)</span>
+      <input type="text" name="title" placeholder="Announcement">
+    </label>
+
+    <label>Message
+      <textarea name="message" rows="5" placeholder="What do you want to say?" required></textarea>
+    </label>
+
+    <button type="submit" class="btn btn-primary">Send broadcast</button>
+  </form>
+</section>
+
+<script>
+  const guildData = {{ guild_list|tojson }};
+  const guildSelect = document.getElementById('guild-select');
+  const channelSelect = document.getElementById('channel-select');
+
+  guildSelect.addEventListener('change', () => {
+    const guild = guildData.find(g => String(g.id) === guildSelect.value);
+    channelSelect.innerHTML = '';
+    if (!guild || !guild.channels.length) {
+      channelSelect.disabled = true;
+      const opt = document.createElement('option');
+      opt.textContent = guild ? 'No sendable channels' : 'Select a server first…';
+      channelSelect.appendChild(opt);
+      return;
+    }
+    channelSelect.disabled = false;
+    guild.channels.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = '#' + c.name;
+      channelSelect.appendChild(opt);
+    });
+  });
+</script>
+{% endif %}
+
+{% endblock %}

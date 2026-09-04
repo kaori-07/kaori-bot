@@ -1,10 +1,12 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import os
 import asyncio
 import time
 import json
 from dotenv import load_dotenv
+from cogs.utils.emoji_manager import EMOJI
 
 # Load environment variables
 load_dotenv()
@@ -33,7 +35,7 @@ def is_allowed():
         data = load_accs()
         if ctx.author.id in data.get("whitelisted", []):
             return True
-        raise commands.CheckFailure("<a:Cross_:1489174755537064046> You do not have permission to use this command.")
+        raise commands.CheckFailure(f"{EMOJI['error']} You do not have permission to use this command.")
     return commands.check(predicate)
 
 
@@ -68,41 +70,34 @@ class dm(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        show_banner()
-        await self.bot.tree.sync() 
-        print(f"Logged in as {self.bot.user} | Prefix: {DEFAULT_PREFIX}")
-        print("Slash commands synced!")
-
-    @commands.hybrid_command(name='white', description="Whitelist a user to use the bot.")
+    @commands.command(name='white', description="Whitelist a user to use the bot.")
     async def whitelist_user(self, ctx, user: discord.Member):
         if ctx.author.id != OWNER_ID:
-            return await ctx.send("<a:Cross_:1489174755537064046> Only the main bot owner can use this command.", ephemeral=True)
+            return await ctx.send(f"{EMOJI['error']} Only the main bot owner can use this command.", ephemeral=True)
         
         data = load_accs()
         if user.id not in data["whitelisted"]:
             data["whitelisted"].append(user.id)
             save_accs(data)
-            await ctx.send(f"<a:tick:1489157731393994854> {user.mention} has been added to the whitelist.")
+            await ctx.send(f"{EMOJI['success']} {user.mention} has been added to the whitelist.")
         else:
-            await ctx.send(f"<a:Alert1:1489188698191822908> {user.mention} is already whitelisted.")
+            await ctx.send(f"{EMOJI['warning']} {user.mention} is already whitelisted.")
 
-    @commands.hybrid_command(name='black', description="Remove a user from the whitelist.")
+    @commands.command(name='black', description="Remove a user from the whitelist.")
     async def blacklist_user(self, ctx, user: discord.Member):
         if ctx.author.id != OWNER_ID:
-            return await ctx.send("<a:Cross_:1489174755537064046> Only the main bot owner can use this command.", ephemeral=True)
+            return await ctx.send(f"{EMOJI['error']} Only the main bot owner can use this command.", ephemeral=True)
         
         data = load_accs()
         if user.id in data["whitelisted"]:
             data["whitelisted"].remove(user.id)
             save_accs(data)
-            await ctx.send(f"<a:tick:1489157731393994854> {user.mention} has been removed from the whitelist.")
+            await ctx.send(f"{EMOJI['success']} {user.mention} has been removed from the whitelist.")
         else:
-            await ctx.send(f"<a:Alert1:1489188698191822908> {user.mention} is not currently whitelisted.")
+            await ctx.send(f"{EMOJI['warning']} {user.mention} is not currently whitelisted.")
 
     # FIX: Renamed from 'help' to 'dmhelp' to avoid conflicts with Discord's default help command
-    @commands.hybrid_command(name='dmhelp', description="Shows the mass DM help panel.")
+    @commands.command(name='dmhelp', description="Shows the mass DM help panel.")
     async def help_panel(self, ctx):
         embed = discord.Embed(
             title="Bot Commands",
@@ -116,7 +111,7 @@ class dm(commands.Cog):
         embed.add_field(name=f"{DEFAULT_PREFIX}dm @user <message>", value="DM a specific user", inline=False)
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name='dmall', description="Mass DM all non-bot members.")
+    @commands.command(name='dmall', description="Mass DM all non-bot members.")
     @is_allowed()
     async def dmall(self, ctx, *, message: str):
         await ctx.defer() 
@@ -152,11 +147,11 @@ class dm(commands.Cog):
         final_embed = discord.Embed(
             title="Mass DM Completed",
             color=discord.Color.green(),
-            description=f"<a:tick:1489157731393994854> Success: **{success}**\n<a:Cross_:1489174755537064046> Failed: **{failed}**\n*Note: Failures are usually users who have server DMs disabled.*"
+            description=f"{EMOJI['success']} Success: **{success}**\n{EMOJI['error']} Failed: **{failed}**\n*Note: Failures are usually users who have server DMs disabled.*"
         )
         await progress_msg.edit(embed=final_embed)
 
-    @commands.hybrid_command(name='dmrole', description="Mass DM to a specific role.")
+    @commands.command(name='dmrole', description="Mass DM to a specific role.")
     @is_allowed()
     async def dmrole(self, ctx, role: discord.Role, *, message: str):
         await ctx.defer()
@@ -192,29 +187,20 @@ class dm(commands.Cog):
         final_embed = discord.Embed(
             title="Role DM Completed",
             color=discord.Color.green(),
-            description=f"<a:tick:1489157731393994854> Success: **{success}**\n<a:Cross_:1489174755537064046> Failed: **{failed}**"
+            description=f"{EMOJI['success']} Success: **{success}**\n{EMOJI['error']} Failed: **{failed}**"
         )
         await progress_msg.edit(embed=final_embed)
 
     @commands.hybrid_command(name='dm', description="DM a specific user.")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @is_allowed()
     async def dm_user(self, ctx, user: discord.User, *, message: str):
         await ctx.defer()
         if await send_dm(user, message):
-            await ctx.send(f"<a:tick:1489157731393994854> Message sent to {user.name}.")
+            await ctx.send(f"{EMOJI['success']} Message sent to {user.name}.")
         else:
-            await ctx.send(f"<a:Cross_:1489174755537064046> Failed to send message to {user.name}. They likely have DMs disabled.")
-
-    @commands.Cog.listener()
-    async def on_command_error(self, ctx, error):
-        if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send(f"<a:Cross_:1489174755537064046> Missing argument: {error.param.name}")
-        elif isinstance(error, commands.BadArgument):
-            await ctx.send("<a:Cross_:1489174755537064046> Invalid argument. Please check your input.")
-        elif isinstance(error, commands.CheckFailure):
-            await ctx.send(str(error)) 
-        else:
-            print(f"Ignoring exception in command {ctx.command}: {error}")
+            await ctx.send(f"{EMOJI['error']} Failed to send message to {user.name}. They likely have DMs disabled.")
 
 async def setup(bot):
     await bot.add_cog(dm(bot))

@@ -12,8 +12,10 @@ import time
 from typing import Dict, Optional, Union
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput
+from cogs.utils.emoji_manager import EMOJI
 
 log = logging.getLogger("song_cog")
 log.setLevel(logging.INFO)
@@ -23,7 +25,9 @@ FFMPEG_PATH: Optional[str] = None  # set to full ffmpeg executable if not on PAT
 FFMPEG_BEFORE = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
 FFMPEG_OPTIONS = {"before_options": FFMPEG_BEFORE, "options": "-vn"}
 SPOTIFY_PLAYLIST_LIMIT = 200  # max tracks to fetch from spotify playlist (0 = no cap)
-PANEL_STORE = os.path.join(os.path.dirname(__file__), "music_panels.json")
+_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+os.makedirs(_DATA_DIR, exist_ok=True)
+PANEL_STORE = os.path.join(_DATA_DIR, "music_panels.json")
 PANEL_PROGRESS_UPDATE_INTERVAL = 5.0  # seconds
 PANEL_INACTIVITY_SECONDS = 300  # 5 minutes inactivity -> auto-delete panel
 
@@ -63,6 +67,28 @@ YTDL_BASE_OPTS = {
 }
 
 
+def _cookie_candidates() -> list:
+    """Find cookie files for yt-dlp to authenticate as a logged-in browser
+    session with. Many VPS/cloud IPs get aggressively rate-limited or
+    outright blocked by YouTube when extracting anonymously, so a valid
+    cookies.txt (exported from a real browser session, Netscape format)
+    makes playback far more reliable. Supports cookie.txt, cookie1.txt,
+    cookie2.txt, cookie3.txt... checked in that order, in either
+    data/cookies/ (preferred) or the project root (for convenience)."""
+    names = ["cookie.txt", "cookie1.txt", "cookie2.txt", "cookie3.txt", "cookie4.txt"]
+    search_dirs = [
+        os.path.join(_DATA_DIR, "cookies"),
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  # project root
+    ]
+    found = []
+    for d in search_dirs:
+        for name in names:
+            path = os.path.join(d, name)
+            if os.path.isfile(path) and path not in found:
+                found.append(path)
+    return found
+
+
 def _make_ytdl(extra: Optional[dict] = None):
     if youtube_dl is None:
         raise RuntimeError("yt-dlp / youtube_dl is not installed.")
@@ -100,12 +126,10 @@ def _select_best_audio_url(info: dict) -> Optional[str]:
 
 
 async def _extract_info_with_retry(loop, ytdl, target: str) -> Optional[dict]:
-    try:
-        extract = functools.partial(ytdl.extract_info, target, download=False)
-        info = await loop.run_in_executor(None, extract)
-    except Exception as e:
-        log.debug("Initial extract_info failed: %s", e)
-        info = None
+    """Tries the primary ytdl instance first, then a series of fallbacks:
+    a plain web-client extractor, then each available cookie file (with and
+    without the web-client override) - so if cookie.txt is expired/invalid,
+    cookie1.txt gets tried next, then cookie2.txt, and so on, before giving up."""
 
     def has_playable(i):
         if not i:
@@ -117,20 +141,30 @@ async def _extract_info_with_retry(loop, ytdl, target: str) -> Optional[dict]:
             i = entries[0]
         return _select_best_audio_url(i) is not None or bool(i.get("url"))
 
-    if has_playable(info):
-        return info
+    # (label, lazy factory) - factories only run if we actually need that attempt
+    attempts = [("primary", lambda: ytdl), ("web-client", lambda: _make_ytdl({"extractor_args": {"youtube": {"player_client": "web"}}}))]
+    for path in _cookie_candidates():
+        label = os.path.basename(path)
+        attempts.append((f"cookie:{label}", lambda p=path: _make_ytdl({"cookiefile": p})))
+        attempts.append((f"cookie:{label}+web-client", lambda p=path: _make_ytdl({"cookiefile": p, "extractor_args": {"youtube": {"player_client": "web"}}})))
 
-    try:
-        log.info("Retrying extraction with player_client=web fallback...")
-        tmp_ytdl = _make_ytdl({"extractor_args": {"youtube": {"player_client": "web"}}})
-        extract2 = functools.partial(tmp_ytdl.extract_info, target, download=False)
-        info2 = await loop.run_in_executor(None, extract2)
-        if has_playable(info2):
-            return info2
-        return info2 or info
-    except Exception as e:
-        log.debug("Fallback extract_info failed: %s", e)
-        return info
+    last_info = None
+    for label, factory in attempts:
+        try:
+            attempt_ytdl = factory()
+            extract = functools.partial(attempt_ytdl.extract_info, target, download=False)
+            info = await loop.run_in_executor(None, extract)
+        except Exception as e:
+            log.debug("Extraction attempt '%s' failed: %s", label, e)
+            info = None
+
+        if has_playable(info):
+            if label != "primary":
+                log.info("Playback resolved via fallback: %s", label)
+            return info
+        last_info = info or last_info
+
+    return last_info
 
 
 # ---------- UI ----------
@@ -251,7 +285,7 @@ class MusicPanel(View):
             vc.source.volume = player["volume"]
         return await inter.response.send_message(f"Volume: {player['volume']*100:.0f}%", ephemeral=True)
 
-    @discord.ui.button(label="Now", style=discord.ButtonStyle.secondary, emoji="🎵")
+    @discord.ui.button(label="Now", style=discord.ButtonStyle.secondary, emoji=f"{EMOJI['note']}")
     async def nowplaying(self, inter: discord.Interaction, btn: Button):
         self._touch()
         player = self.cog.players.get(self.guild_id)
@@ -267,19 +301,19 @@ class MusicPanel(View):
             embed.add_field(name="Duration", value=f"{mins}:{secs:02d}", inline=True)
         return await inter.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Queue", style=discord.ButtonStyle.secondary, emoji="<:BlueScroll:1489151045933207643>")
+    @discord.ui.button(label="Queue", style=discord.ButtonStyle.secondary, emoji=f"{EMOJI['scroll']}")
     async def show_queue(self, inter: discord.Interaction, btn: Button):
         self._touch()
         player = self.cog.players.get(self.guild_id)
         q = player.get("queue", []) if player else []
         if not q:
-            return await inter.response.send_message("Queue is empty.", ephemeral=True)
+            return await inter.response.send_message(f"{EMOJI['info']} Queue is empty.", ephemeral=True)
         lines = [f"{i}. {it.get('title')}" for i, it in enumerate(q[:10], start=1)]
         if len(q) > 10:
             lines.append(f"...and {len(q)-10} more")
         return await inter.response.send_message("\n".join(lines), ephemeral=True)
 
-    @discord.ui.button(label="Leave", style=discord.ButtonStyle.danger, emoji="👋")
+    @discord.ui.button(label="Leave", style=discord.ButtonStyle.danger, emoji=f"{EMOJI['wave']}")
     async def leave(self, inter: discord.Interaction, btn: Button):
         self._touch()
         player = self.cog.players.get(self.guild_id)
@@ -297,19 +331,19 @@ class MusicPanel(View):
             updater.cancel()
         return await inter.response.send_message("Disconnected.", ephemeral=True)
 
-    @discord.ui.button(label="Up Next", style=discord.ButtonStyle.secondary, emoji="📋")
+    @discord.ui.button(label="Up Next", style=discord.ButtonStyle.secondary, emoji=f"{EMOJI['clipboard']}")
     async def up_next(self, inter: discord.Interaction, btn: Button):
         self._touch()
         player = self.cog.get_player(self.guild_id)
         q = player.get("queue", []) if player else []
         if not q:
-            return await inter.response.send_message("Queue is empty.", ephemeral=True)
+            return await inter.response.send_message(f"{EMOJI['info']} Queue is empty.", ephemeral=True)
         lines = [f"{i}. {it.get('title')}" for i, it in enumerate(q[:8], start=1)]
         if len(q) > 8:
             lines.append(f"...and {len(q)-8} more")
         return await inter.response.send_message("\n".join(lines), ephemeral=True)
 
-    @discord.ui.button(label="Save", style=discord.ButtonStyle.secondary, emoji="💾")
+    @discord.ui.button(label="Save", style=discord.ButtonStyle.secondary, emoji=f"{EMOJI['floppy']}")
     async def save_track(self, inter: discord.Interaction, btn: Button):
         self._touch()
         player = self.cog.get_player(self.guild_id)
@@ -331,7 +365,10 @@ class MusicCog(commands.Cog):
         self.bot = bot
         self.players: Dict[int, Dict] = {}
         try:
-            self.ytdl = _make_ytdl()
+            _cookies = _cookie_candidates()
+            self.ytdl = _make_ytdl({"cookiefile": _cookies[0]} if _cookies else None)
+            if _cookies:
+                log.info("Music: using cookie file '%s' (%d cookie file(s) found, others available as fallback)", os.path.basename(_cookies[0]), len(_cookies))
         except Exception:
             self.ytdl = None
         self.spotify_client = None
@@ -413,9 +450,9 @@ class MusicCog(commands.Cog):
         channel_attr = getattr(author, "voice", None)
         if not channel_attr or not channel_attr.channel:
             if isinstance(ctx, discord.Interaction):
-                await ctx.followup.send("<a:Cross_:1489174755537064046> You must be connected to a voice channel.", ephemeral=True)
+                await ctx.followup.send(f"{EMOJI['error']} You must be connected to a voice channel.", ephemeral=True)
             else:
-                await ctx.send("<a:Cross_:1489174755537064046> You must be connected to a voice channel.")
+                await ctx.send(f"{EMOJI['error']} You must be connected to a voice channel.")
             return None
         channel = channel_attr.channel
         vc = discord.utils.get(self.bot.voice_clients, guild=channel.guild)
@@ -425,9 +462,9 @@ class MusicCog(commands.Cog):
             except Exception as e:
                 log.exception("Could not connect: %s", e)
                 if isinstance(ctx, discord.Interaction):
-                    await ctx.followup.send(f"<a:Cross_:1489174755537064046> Could not connect: {e}", ephemeral=True)
+                    await ctx.followup.send(f"{EMOJI['error']} Could not connect: {e}", ephemeral=True)
                 else:
-                    await ctx.send(f"<a:Cross_:1489174755537064046> Could not connect: {e}")
+                    await ctx.send(f"{EMOJI['error']} Could not connect: {e}")
                 return None
         else:
             if vc.channel.id != channel.id:
@@ -500,7 +537,7 @@ class MusicCog(commands.Cog):
                     info = None
 
         if not info:
-            text = "<a:Cross_:1489174755537064046> Could not extract any information for that query."
+            text = f"{EMOJI['error']} Could not extract any information for that query."
             if is_inter:
                 await ctx_or_inter.followup.send(text, ephemeral=True)
             else:
@@ -510,7 +547,7 @@ class MusicCog(commands.Cog):
         if "entries" in info:
             entries = info.get("entries") or []
             if not entries:
-                txt = "<a:Cross_:1489174755537064046> No entries found."
+                txt = f"{EMOJI['error']} No entries found."
                 if is_inter:
                     await ctx_or_inter.followup.send(txt, ephemeral=True)
                 else:
@@ -520,7 +557,7 @@ class MusicCog(commands.Cog):
 
         stream_url = _select_best_audio_url(info) or info.get("url")
         if not stream_url:
-            txt = ("<a:Cross_:1489174755537064046> No playable stream URL found. YouTube may be forcing SABR-only streaming. "
+            txt = (f"{EMOJI['error']} No playable stream URL found. YouTube may be forcing SABR-only streaming. "
                    "Try updating yt-dlp or installing Node.js, or try another video.")
             if is_inter:
                 await ctx_or_inter.followup.send(txt, ephemeral=True)
@@ -540,9 +577,9 @@ class MusicCog(commands.Cog):
         player["queue"].append(track)
         pos = len(player["queue"])
         if is_inter:
-            await ctx_or_inter.followup.send(f"<a:tick:1489157731393994854> Queued **{track['title']}** (position {pos}).", ephemeral=True)
+            await ctx_or_inter.followup.send(f"{EMOJI['success']} Queued **{track['title']}** (position {pos}).", ephemeral=True)
         else:
-            await ctx_or_inter.send(f"<a:tick:1489157731393994854> Queued **{track['title']}** (position {pos}).")
+            await ctx_or_inter.send(f"{EMOJI['success']} Queued **{track['title']}** (position {pos}).")
 
         # ensure panel exists or create a new one (force new panel per request)
         try:
@@ -632,7 +669,7 @@ class MusicCog(commands.Cog):
                 pid = None
 
         if not pid:
-            msg = ("<a:Cross_:1489174755537064046> Could not parse a Spotify playlist id from your input. "
+            msg = (f"{EMOJI['error']} Could not parse a Spotify playlist id from your input. "
                    "Provide a URL like `https://open.spotify.com/playlist/<id>` or a playlist ID or `spotify:playlist:<id>`.")
             if is_inter:
                 await ctx_or_inter.followup.send(msg, ephemeral=True)
@@ -703,7 +740,7 @@ class MusicCog(commands.Cog):
 
         except Exception as e:
             log.exception("Spotify playlist fetch failed: %s", e)
-            txt = f"<a:Cross_:1489174755537064046> Could not fetch playlist: {e}"
+            txt = f"{EMOJI['error']} Could not fetch playlist: {e}"
             if is_inter:
                 await ctx_or_inter.followup.send(txt, ephemeral=True)
             else:
@@ -723,9 +760,9 @@ class MusicCog(commands.Cog):
         self.touch_panel(guild_id)
 
         if is_inter:
-            await ctx_or_inter.followup.send(f"<a:tick:1489157731393994854> Added {added} tracks from Spotify playlist to the queue. ({player.get('playlist_name') or 'unknown name'})", ephemeral=False)
+            await ctx_or_inter.followup.send(f"{EMOJI['success']} Added {added} tracks from Spotify playlist to the queue. ({player.get('playlist_name') or 'unknown name'})", ephemeral=False)
         else:
-            await ctx_or_inter.send(f"<a:tick:1489157731393994854> Added {added} tracks from Spotify playlist to the queue. ({player.get('playlist_name') or 'unknown name'})")
+            await ctx_or_inter.send(f"{EMOJI['success']} Added {added} tracks from Spotify playlist to the queue. ({player.get('playlist_name') or 'unknown name'})")
 
         vc = await self.ensure_voice(ctx_or_inter)
         if vc is None:
@@ -922,11 +959,15 @@ class MusicCog(commands.Cog):
                 if guild:
                     chan = next((c for c in guild.text_channels if c.permissions_for(guild.me).send_messages), None)
                     if chan:
-                        await chan.send(f"<a:Alert1:1489188698191822908> Skipped track (could not resolve): {next_track.get('title')}")
+                        await chan.send(f"{EMOJI['warning']} Skipped track (could not resolve): {next_track.get('title')}")
                 await asyncio.sleep(0.2)
                 return await self._play_next(guild_id)
 
         player["now"] = next_track
+        history = player.setdefault("history", [])
+        history.append(next_track.get("title", "Unknown track"))
+        if len(history) > 50:
+            del history[:-50]
         stream_url = next_track.get("stream_url")
         try:
             if FFMPEG_PATH:
@@ -970,7 +1011,7 @@ class MusicCog(commands.Cog):
             if guild:
                 chan = next((c for c in guild.text_channels if c.permissions_for(guild.me).send_messages), None)
                 if chan:
-                    await chan.send(f"<a:Cross_:1489174755537064046> Playback error: {e}")
+                    await chan.send(f"{EMOJI['error']} Playback error: {e}")
             await self._after_play(guild_id, e)
 
     async def _panel_updater_task(self, guild_id: int):
@@ -1054,65 +1095,88 @@ class MusicCog(commands.Cog):
 
     # ---------- commands (public) ----------
     @commands.hybrid_command(name="play", aliases=["p"])
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def play(self, ctx: commands.Context, *, query: str):
         await self.add_and_play(ctx, query)
 
-    @commands.hybrid_command(name="spotify_playlist", with_app_command=True)
+    @commands.command(name="spotify_playlist", with_app_command=True)
+    @commands.guild_only()
     async def spotify_playlist_cmd(self, ctx: commands.Context, playlist: str):
         await ctx.defer()
         await self.spotify_playlist(ctx, playlist)
 
     @commands.hybrid_command()
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def pause(self, ctx: commands.Context):
         player = self.get_player(ctx.guild.id)
         vc = player.get("voice_client")
         if not vc or not vc.is_playing():
-            return await ctx.send("<a:Cross_:1489174755537064046> Nothing is playing.")
+            return await ctx.send(f"{EMOJI['error']} Nothing is playing.")
         vc.pause()
-        await ctx.send("⏸️ Paused.")
+        await ctx.send(f"{EMOJI['pause']} Paused.")
         self.touch_panel(ctx.guild.id)
 
     @commands.hybrid_command()
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def resume(self, ctx: commands.Context):
         player = self.get_player(ctx.guild.id)
         vc = player.get("voice_client")
         if not vc or not vc.is_paused():
-            return await ctx.send("<a:Cross_:1489174755537064046> Nothing is paused.")
+            return await ctx.send(f"{EMOJI['error']} Nothing is paused.")
         vc.resume()
-        await ctx.send("▶️ Resumed.")
+        await ctx.send(f"{EMOJI['play_icon']} Resumed.")
         self.touch_panel(ctx.guild.id)
 
     @commands.hybrid_command()
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def stop(self, ctx: commands.Context):
+        if not self._is_dj_or_alone(ctx):
+            return await ctx.send(f"{EMOJI['locked']} Only the DJ role (or being alone in voice) can stop playback here.")
         player = self.get_player(ctx.guild.id)
         vc = player.get("voice_client")
         if not vc:
-            return await ctx.send("<a:Cross_:1489174755537064046> I'm not connected.")
+            return await ctx.send(f"{EMOJI['error']} I'm not connected.")
         vc.stop()
         player["queue"].clear()
         player["is_playlist"] = False
         updater = player.get("panel_updater")
         if updater and not updater.done():
             updater.cancel()
-        await ctx.send("⏹️ Stopped and cleared the queue.")
+        await ctx.send(f"{EMOJI['stop_icon']} Stopped and cleared the queue.")
         self.touch_panel(ctx.guild.id)
 
     @commands.hybrid_command()
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def skip(self, ctx: commands.Context):
+        if not self._is_dj_or_alone(ctx):
+            return await ctx.send(f"{EMOJI['locked']} Only the DJ role (or being alone in voice) can skip here.")
         player = self.get_player(ctx.guild.id)
         vc = player.get("voice_client")
         if not vc or (not vc.is_playing() and not vc.is_paused()):
-            return await ctx.send("<a:Cross_:1489174755537064046> Nothing to skip.")
+            return await ctx.send(f"{EMOJI['error']} Nothing to skip.")
         vc.stop()
-        await ctx.send("⏭ Skipped.")
+        await ctx.send(f"{EMOJI['skip']} Skipped.")
         self.touch_panel(ctx.guild.id)
 
     @commands.hybrid_command()
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def leave(self, ctx: commands.Context):
         player = self.get_player(ctx.guild.id)
         vc = player.get("voice_client")
         if not vc:
-            return await ctx.send("<a:Cross_:1489174755537064046> I'm not connected.")
+            return await ctx.send(f"{EMOJI['error']} I'm not connected.")
         await vc.disconnect()
         player["voice_client"] = None
         player["queue"].clear()
@@ -1122,15 +1186,18 @@ class MusicCog(commands.Cog):
         updater = player.get("panel_updater")
         if updater and not updater.done():
             updater.cancel()
-        await ctx.send("👋 Disconnected and cleared queue.")
+        await ctx.send(f"{EMOJI['wave']} Disconnected and cleared queue.")
         self.touch_panel(ctx.guild.id)
 
     @commands.hybrid_command(name="nowplaying", aliases=["np"])
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def nowplaying(self, ctx: commands.Context):
         player = self.get_player(ctx.guild.id)
         now = player.get("now")
         if not now:
-            return await ctx.send("<a:Cross_:1489174755537064046> Nothing is playing.")
+            return await ctx.send(f"{EMOJI['error']} Nothing is playing.")
         embed = discord.Embed(title="Now Playing", description=f"[{now['title']}]({now.get('webpage_url')})" if now.get("webpage_url") else now.get("title"))
         if now.get("duration"):
             embed.add_field(name="Duration", value=str(now["duration"]), inline=True)
@@ -1138,47 +1205,244 @@ class MusicCog(commands.Cog):
         self.touch_panel(ctx.guild.id)
 
     @commands.hybrid_command(name="queue")
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def _queue(self, ctx: commands.Context):
         player = self.get_player(ctx.guild.id)
         q = player.get("queue", [])
         if not q:
-            return await ctx.send("Queue is empty.")
+            return await ctx.send(f"{EMOJI['info']} Queue is empty.")
         lines = [f"{i}. {it.get('title')}" for i, it in enumerate(q[:20], start=1)]
         if len(q) > 20:
             lines.append(f"...and {len(q)-20} more.")
         await ctx.send("\n".join(lines))
         self.touch_panel(ctx.guild.id)
 
+    # ---------------- lyrics ----------------
+    @commands.command(name="lyrics", description="Look up lyrics for a song.")
+    async def lyrics(self, ctx: commands.Context, *, query: str):
+        await ctx.defer()
+        if " - " in query:
+            artist, title = [p.strip() for p in query.split(" - ", 1)]
+        else:
+            player = self.get_player(ctx.guild.id) if ctx.guild else None
+            now = player.get("now") if player else None
+            if now and now.get("title"):
+                artist, title = "", now["title"]
+            else:
+                artist, title = "", query
+
+        import aiohttp
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"https://api.lyrics.ovh/v1/{artist}/{title}" if artist else f"https://api.lyrics.ovh/v1/ /{title}") as resp:
+                    if resp.status != 200:
+                        return await ctx.send(f"{EMOJI['error']} No lyrics found for that.")
+                    data = await resp.json()
+        except Exception:
+            return await ctx.send(f"{EMOJI['error']} Lyrics service is unavailable right now.")
+
+        lyrics_text = data.get("lyrics", "").strip()
+        if not lyrics_text:
+            return await ctx.send(f"{EMOJI['error']} No lyrics found for that.")
+
+        embed = discord.Embed(title=f"🎤 Lyrics: {title}", description=lyrics_text[:4000], color=discord.Color.blurple())
+        await ctx.send(embed=embed)
+
+    # ---------------- 24/7 mode ----------------
+    @commands.command(name="247", description="Toggle 24/7 mode — bot stays in voice even when the queue is empty.")
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def toggle_247(self, ctx: commands.Context):
+        player = self.get_player(ctx.guild.id)
+        player["stay_connected"] = not player.get("stay_connected", False)
+        await ctx.send(f"{EMOJI['success']} 24/7 mode is now **{'ON' if player['stay_connected'] else 'OFF'}**.")
+
+    # ---------------- DJ role ----------------
+    @commands.command(name="setdjrole", description="Restrict playback controls to a specific role.")
+    @commands.guild_only()
+    @commands.has_permissions(administrator=True)
+    async def setdjrole(self, ctx: commands.Context, role: discord.Role = None):
+        from cogs.utils.json_store import get_store
+        store = get_store("music_dj.json", dict)
+
+        def _mut(data):
+            if role:
+                data[str(ctx.guild.id)] = role.id
+            else:
+                data.pop(str(ctx.guild.id), None)
+            return data
+        store.mutate(_mut)
+        await ctx.send(f"{EMOJI['success']} DJ role set to {role.mention}." if role else f"{EMOJI['success']} DJ restriction removed — anyone can control playback.")
+
+    def _is_dj_or_alone(self, ctx: commands.Context) -> bool:
+        from cogs.utils.json_store import get_store
+        store = get_store("music_dj.json", dict)
+        dj_role_id = store.read().get(str(ctx.guild.id))
+        if not dj_role_id:
+            return True
+        if ctx.author.guild_permissions.administrator:
+            return True
+        role = ctx.guild.get_role(dj_role_id)
+        if role and role in ctx.author.roles:
+            return True
+        vc = ctx.guild.voice_client
+        if vc and vc.channel and len([m for m in vc.channel.members if not m.bot]) <= 1:
+            return True
+        return False
+
+    # ---------------- playlists ----------------
+    @commands.command(name="playlist_save", description="Save the current queue as a named playlist.")
+    async def playlist_save(self, ctx: commands.Context, name: str):
+        if not ctx.guild:
+            return await ctx.send(f"{EMOJI['error']} This only works in a server with an active queue.")
+        player = self.get_player(ctx.guild.id)
+        queue = player.get("queue", [])
+        if not queue:
+            return await ctx.send(f"{EMOJI['error']} The queue is empty — nothing to save.")
+
+        from cogs.utils.json_store import get_store
+        store = get_store("playlists.json", dict)
+        urls = [item.get("webpage_url") or item.get("url") for item in queue if item.get("webpage_url") or item.get("url")]
+
+        def _mut(data):
+            data.setdefault(str(ctx.author.id), {})[name] = urls
+            return data
+        store.mutate(_mut)
+        await ctx.send(f"{EMOJI['success']} Saved **{len(urls)}** track(s) as playlist `{name}`.")
+
+    @commands.command(name="playlist_load", description="Queue up a saved playlist.")
+    @commands.guild_only()
+    async def playlist_load(self, ctx: commands.Context, name: str):
+        from cogs.utils.json_store import get_store
+        store = get_store("playlists.json", dict)
+        urls = store.read().get(str(ctx.author.id), {}).get(name)
+        if not urls:
+            return await ctx.send(f"{EMOJI['error']} No playlist named `{name}` found.")
+
+        play_command = self.bot.get_command("play")
+        if not play_command:
+            return await ctx.send(f"{EMOJI['error']} Music playback isn't available right now.")
+
+        await ctx.send(f"{EMOJI['success']} Queuing **{len(urls)}** track(s) from `{name}`...")
+        for url in urls:
+            try:
+                await ctx.invoke(play_command, query=url)
+            except Exception:
+                continue
+
+    @commands.command(name="playlists", description="List your saved playlists.")
+    async def playlists_list(self, ctx: commands.Context):
+        from cogs.utils.json_store import get_store
+        store = get_store("playlists.json", dict)
+        mine = store.read().get(str(ctx.author.id), {})
+        if not mine:
+            return await ctx.send(f"{EMOJI['info']} You haven't saved any playlists yet.")
+        embed = discord.Embed(title=f"{EMOJI['music_note_beam']} Your Playlists", color=discord.Color.blurple())
+        for name, urls in mine.items():
+            embed.add_field(name=name, value=f"{len(urls)} track(s)", inline=True)
+        await ctx.send(embed=embed)
+
+    @commands.command(name="shuffle")
+    @commands.guild_only()
+    async def shuffle_queue(self, ctx: commands.Context):
+        """Shuffle the current queue order."""
+        if not self._is_dj_or_alone(ctx):
+            return await ctx.send(f"{EMOJI['locked']} Only the DJ role (or being alone in voice) can shuffle here.")
+        player = self.get_player(ctx.guild.id)
+        queue = player.get("queue", [])
+        if len(queue) < 2:
+            return await ctx.send(f"{EMOJI['info']} Not enough tracks in the queue to shuffle.")
+        random.shuffle(queue)
+        await ctx.send(f"{EMOJI['success']} Shuffled **{len(queue)}** track(s) in the queue.")
+
+    @commands.command(name="voteskip")
+    @commands.guild_only()
+    async def voteskip(self, ctx: commands.Context):
+        """Vote to skip the current track — needs majority of listeners in voice."""
+        vc = ctx.guild.voice_client
+        if not vc or not vc.is_playing():
+            return await ctx.send(f"{EMOJI['info']} Nothing is playing right now.")
+
+        listeners = [m for m in vc.channel.members if not m.bot]
+        if ctx.author not in listeners:
+            return await ctx.send(f"{EMOJI['error']} You need to be in the voice channel to vote.")
+
+        player = self.get_player(ctx.guild.id)
+        votes = player.setdefault("skip_votes", set())
+        votes.add(ctx.author.id)
+        needed = max(1, (len(listeners) // 2) + 1)
+
+        if len(votes) >= needed:
+            vc.stop()
+            player["skip_votes"] = set()
+            await ctx.send(f"{EMOJI['skip']} Vote-skip passed ({len(votes)}/{needed}) — skipping!")
+        else:
+            await ctx.send(f"{EMOJI['success']} Vote registered ({len(votes)}/{needed} needed to skip).")
+
+    @commands.command(name="history", aliases=['playhistory'])
+    @commands.guild_only()
+    async def play_history(self, ctx: commands.Context):
+        """Show recently played tracks in this server."""
+        player = self.get_player(ctx.guild.id)
+        history = player.get("history", [])
+        if not history:
+            return await ctx.send(f"{EMOJI['info']} No play history yet this session.")
+        embed = discord.Embed(title=f"{EMOJI['clock']} Recently Played", color=discord.Color.blurple())
+        embed.description = "\n".join(f"{i+1}. {t}" for i, t in enumerate(history[-10:]))
+        await ctx.send(embed=embed)
+
     @commands.hybrid_command()
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def audiodiag(self, ctx: commands.Context):
-        lines = []
-        lines.append(f"yt-dlp/youtube_dl: {'available' if self.ytdl else 'missing'}")
+        embed = discord.Embed(title=f"{EMOJI['wrench']} Audio Diagnostics", color=discord.Color.blurple())
+
+        embed.add_field(name="yt-dlp / youtube_dl", value=f"{EMOJI['success'] if self.ytdl else EMOJI['error']} {'available' if self.ytdl else 'missing'}", inline=True)
+
         import shutil as _sh
         ffexe = _sh.which("ffmpeg")
-        lines.append(f"ffmpeg on PATH: {'yes' if ffexe else 'no'} (resolved: {ffexe})")
-        
-        # New checks to help debug voice dependencies for DAVE E2EE
+        embed.add_field(name="ffmpeg", value=f"{EMOJI['success'] if ffexe else EMOJI['error']} {'on PATH' if ffexe else 'not found'}", inline=True)
+
+        cookies = _cookie_candidates()
+        if cookies:
+            cookie_list = "\n".join(f"• `{os.path.basename(p)}`" for p in cookies)
+            embed.add_field(name=f"{EMOJI['shield']} Cookie files ({len(cookies)})", value=cookie_list, inline=False)
+        else:
+            embed.add_field(
+                name=f"{EMOJI['warning']} Cookie files",
+                value="None found. On a VPS, YouTube often rate-limits or blocks anonymous cloud IPs — "
+                      "drop a `cookie.txt` (Netscape format, exported from a logged-in browser) into "
+                      "`data/cookies/` or the project root to fix most playback failures. "
+                      "`cookie1.txt`, `cookie2.txt`, etc. are tried automatically as fallbacks.",
+                inline=False,
+            )
+
         try:
             import davey
-            lines.append("davey (E2EE voice): installed <a:tick:1489157731393994854>")
+            embed.add_field(name="davey (E2EE voice)", value=f"{EMOJI['success']} installed", inline=True)
         except ImportError:
-            lines.append("davey (E2EE voice): missing <a:Cross_:1489174755537064046> (Required for voice!)")
-            
+            embed.add_field(name="davey (E2EE voice)", value=f"{EMOJI['error']} missing — required for voice!", inline=True)
+
         try:
             import nacl
-            lines.append("PyNaCl: installed <a:tick:1489157731393994854>")
+            embed.add_field(name="PyNaCl", value=f"{EMOJI['success']} installed", inline=True)
         except ImportError:
-            lines.append("PyNaCl: missing <a:Cross_:1489174755537064046> (Required for voice!)")
+            embed.add_field(name="PyNaCl", value=f"{EMOJI['error']} missing — required for voice!", inline=True)
 
         if spotipy:
-            lines.append(f"spotipy: available (spotify client configured: {'yes' if self.spotify_client else 'no'})")
+            embed.add_field(name="Spotify", value=f"{EMOJI['success']} spotipy available, client {'configured' if self.spotify_client else 'not configured'}", inline=True)
         else:
-            lines.append("spotipy: missing")
-        lines.append("If you see SABR/EJS problems, installing Node.js can help; the cog automatically retries with player_client=web when needed.")
-        await ctx.send("```\n" + "\n".join(lines) + "\n```")
+            embed.add_field(name="Spotify", value=f"{EMOJI['error']} spotipy missing", inline=True)
+
+        embed.set_footer(text="If you see SABR/EJS errors, installing Node.js can help — the cog auto-retries with player_client=web and cookies when needed.")
+        await ctx.send(embed=embed)
         self.touch_panel(ctx.guild.id)
 
-    @commands.hybrid_command(name="musicpanel")
+    @commands.command(name="musicpanel")
+    @commands.guild_only()
     async def musicpanel(self, ctx: commands.Context):
         """Send or recreate the music control panel."""
         player = self.get_player(ctx.guild.id)
@@ -1188,12 +1452,12 @@ class MusicCog(commands.Cog):
         try:
             msg = await self.ensure_panel_for_guild(ctx.channel, ctx.guild.id, force=True)
             if msg:
-                await ctx.send("Panel created.")
+                await ctx.send(f"{EMOJI['success']} Music panel created.")
             else:
-                await ctx.send("Failed to create panel.")
+                await ctx.send(f"{EMOJI['error']} Failed to create panel.")
         except Exception:
             log.exception("Failed to create panel")
-            await ctx.send("Failed to create panel.")
+            await ctx.send(f"{EMOJI['error']} Failed to create panel.")
         self.touch_panel(ctx.guild.id)
 
     # cleanup

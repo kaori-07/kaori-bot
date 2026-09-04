@@ -1,0 +1,57 @@
+{% extends "_shell.html" %}
+{% block title %}{{ guild.name }} — Members{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow"><a href="{{ url_for('guilds') }}" style="color: var(--muted); text-decoration:none;">&larr; Servers</a></p>
+    <h1>{{ guild.name }}</h1>
+  </div>
+  <span class="pill pill-on">{{ total_members }} members</span>
+</header>
+
+<section class="panel reveal" style="--delay: 40ms">
+  <div class="panel-head"><h2>🔊 Live Voice Activity</h2></div>
+  {% if not voice_rows %}
+  <p class="panel-sub">No one is in a voice channel right now.</p>
+  {% else %}
+  <div class="cog-list">
+    {% for vc in voice_rows %}
+    <div class="cog-row">
+      <span class="cog-name">{{ vc.channel }}</span>
+      <span class="mono muted small">{{ vc.members|join(', ') }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel reveal" style="--delay: 80ms">
+  <div class="panel-head">
+    <h2>Members</h2>
+  </div>
+  <form method="get" class="inline-form" style="margin-bottom: 14px;">
+    <input type="text" name="q" value="{{ query }}" placeholder="Search by name…" class="search-input" style="width: 260px;">
+    <button type="submit" class="btn btn-ghost">Search</button>
+  </form>
+  <div class="cog-list">
+    {% for m in member_rows %}
+    <div class="cog-row">
+      <div class="cog-info">
+        <img src="{{ m.avatar_url }}" alt="" style="width:28px;height:28px;border-radius:50%;">
+        <span class="cog-name">{{ m.display_name }}</span>
+        {% if m.bot %}<span class="pill pill-off">bot</span>{% endif %}
+        <span class="mono muted small">{{ m.top_role }}</span>
+      </div>
+      <span class="mono muted small">joined {{ m.joined_at }}</span>
+    </div>
+    {% else %}
+    <p class="panel-sub">No members match that search.</p>
+    {% endfor %}
+  </div>
+  {% if member_rows|length == 200 %}
+  <p class="panel-sub" style="margin-top:10px;">Showing first 200 results — refine your search for more.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

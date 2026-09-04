@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Sign in — Control Panel{% endblock %}
+{% block bodyclass %}auth{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-mark">
+      <span class="dot"></span>
+      <span class="mark-text">CONTROL PANEL</span>
+    </div>
+    <h1>Sign in</h1>
+    <p class="auth-sub">Owner access only. Everything here changes live on the bot.</p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-stack">
+          {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <form method="post" action="{{ url_for('login') }}" class="auth-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Username
+        <input type="text" name="username" autocomplete="username" required autofocus>
+      </label>
+      <label>Password
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+    </form>
+
+    <p class="auth-hint">No account yet? Run <code>python set_dashboard_password.py</code> on the server.</p>
+  </div>
+</div>
+{% endblock %}

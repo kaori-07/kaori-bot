@@ -2,21 +2,59 @@ import discord
 from discord.ext import commands, tasks
 from mcstatus import JavaServer
 from datetime import datetime
+from cogs.utils.emoji_manager import EMOJI
+from cogs.utils.json_store import get_store
+
+MC_CONFIG_FILE = "mcstatus_config.json"
+MC_DEFAULTS = {
+    "server_ip": "play.mythicalnetwork.fun:25584",
+    "status_channel_id": 135067128134373536,
+    "auto_update_enabled": True,
+    "status_message_id": None,
+}
+
 
 class MCStatus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Default Configurations
-        self.server_ip = "play.mythicalnetwork.fun:25584"
-        self.status_channel_id = 135067128134373536
         self.thumbnail_url = "https://cdn.discordapp.com/attachments/1357215993742495787/1363197770420191522/image0-1.png"
-        
-        # State Tracking
-        self.auto_update_enabled = True
-        self.status_message_id = None 
+        self.store = get_store(MC_CONFIG_FILE, lambda: dict(MC_DEFAULTS))
 
         # Start the background task properly
         self.update_status_loop.start()
+
+    # -- persisted config, proxied so existing code below reads/writes normally --
+    @property
+    def server_ip(self):
+        return self.store.read().get("server_ip", MC_DEFAULTS["server_ip"])
+
+    @server_ip.setter
+    def server_ip(self, value):
+        self.store.mutate(lambda d: {**d, "server_ip": value})
+
+    @property
+    def status_channel_id(self):
+        return self.store.read().get("status_channel_id", MC_DEFAULTS["status_channel_id"])
+
+    @status_channel_id.setter
+    def status_channel_id(self, value):
+        self.store.mutate(lambda d: {**d, "status_channel_id": value})
+
+    @property
+    def auto_update_enabled(self):
+        return self.store.read().get("auto_update_enabled", True)
+
+    @auto_update_enabled.setter
+    def auto_update_enabled(self, value):
+        self.store.mutate(lambda d: {**d, "auto_update_enabled": value})
+
+    @property
+    def status_message_id(self):
+        return self.store.read().get("status_message_id")
+
+    @status_message_id.setter
+    def status_message_id(self, value):
+        self.store.mutate(lambda d: {**d, "status_message_id": value})
 
     def cog_unload(self):
         self.update_status_loop.cancel()
@@ -29,7 +67,7 @@ class MCStatus(commands.Cog):
                 description="**MYTHICAL NETWORK | FFA SERVER**",
                 color=discord.Color.red()
             )
-            embed.add_field(name="Status", value="🔴 Offline", inline=True)
+            embed.add_field(name="Status", value=f"{EMOJI['red_dot']} Offline", inline=True)
             embed.add_field(name="Error", value=f"```\n{error}\n```", inline=False)
         else:
             embed = discord.Embed(
@@ -39,7 +77,7 @@ class MCStatus(commands.Cog):
             )
             
             # Basic Stats
-            embed.add_field(name="Status", value="🟢 Online", inline=True)
+            embed.add_field(name="Status", value=f"{EMOJI['green_dot']} Online", inline=True)
             embed.add_field(name="Players Online", value=f"{status.players.online}/{status.players.max}", inline=True)
             embed.add_field(name="Ping", value=f"{round(status.latency)}ms", inline=True)
             
@@ -63,7 +101,7 @@ class MCStatus(commands.Cog):
         embed.add_field(name="Server IP", value=f"`{self.server_ip}`", inline=False)
         embed.add_field(name="Community", value="[Join Kaori Discord](https://discord.gg/scratchmc)", inline=False)
         embed.set_thumbnail(url=self.thumbnail_url)
-        embed.set_footer(text=f"🕒 Last updated • {datetime.now().strftime('%d %b %Y • %I:%M %p')}")
+        embed.set_footer(text=f"{EMOJI['clock']} Last updated • {datetime.now().strftime('%d %b %Y • %I:%M %p')}")
         
         return embed
 
@@ -83,7 +121,7 @@ class MCStatus(commands.Cog):
         channel = self.bot.get_channel(self.status_channel_id)
         if not channel:
             if ctx_for_reply:
-                await ctx_for_reply.send("<a:Cross_:1489174755537064046> Status channel not found. Ensure the ID is correct.")
+                await ctx_for_reply.send(f"{EMOJI['error']} Status channel not found. Ensure the ID is correct.")
             return
 
         # Fetch Data Asynchronously
@@ -101,7 +139,7 @@ class MCStatus(commands.Cog):
                 msg = await channel.fetch_message(self.status_message_id)
                 await msg.edit(embed=embed)
                 if ctx_for_reply:
-                    await ctx_for_reply.send("<a:tick:1489157731393994854> Status panel updated.")
+                    await ctx_for_reply.send(f"{EMOJI['success']} Status panel updated.")
                 return
             except discord.NotFound:
                 self.status_message_id = None # Message deleted, fall through to send a new one
@@ -117,10 +155,10 @@ class MCStatus(commands.Cog):
             new_msg = await channel.send(embed=embed)
             self.status_message_id = new_msg.id
             if ctx_for_reply:
-                await ctx_for_reply.send("<a:tick:1489157731393994854> Sent a new status panel.")
+                await ctx_for_reply.send(f"{EMOJI['success']} Sent a new status panel.")
         except Exception as e:
             if ctx_for_reply:
-                await ctx_for_reply.send(f"<a:Cross_:1489174755537064046> Failed to send panel: {e}")
+                await ctx_for_reply.send(f"{EMOJI['error']} Failed to send panel: {e}")
 
     # ==========================
     #       COMMAND GROUP
@@ -129,12 +167,13 @@ class MCStatus(commands.Cog):
     @commands.group(invoke_without_command=True, aliases=['mcstatus'])
     async def mc(self, ctx):
         """Base command for Minecraft status. Use `,help mc` for subcommands."""
+        await ctx.send(f"{EMOJI['info']} Use `,mc info`, `,mc force`, `,mc toggle`, `,mc setip`, or `,mc setchannel`.")
         await ctx.send_help(ctx.command)
 
     @mc.command(name="info")
     async def mc_info(self, ctx):
         """Fetch and display the server status right here."""
-        loading_msg = await ctx.send("🔍 Fetching server data...")
+        loading_msg = await ctx.send(f"{EMOJI['search']} Fetching server data...")
         try:
             server = JavaServer.lookup(self.server_ip)
             status = await server.async_status()
@@ -156,7 +195,7 @@ class MCStatus(commands.Cog):
         """Toggle the 5-minute auto-updating on or off."""
         self.auto_update_enabled = not self.auto_update_enabled
         state = "**enabled**" if self.auto_update_enabled else "**disabled**"
-        await ctx.send(f"⚙️ Kaori auto-updates are now {state}.")
+        await ctx.send(f"{EMOJI['gear']} Kaori auto-updates are now {state}.")
         if self.auto_update_enabled:
             await self._perform_update()
 
@@ -165,7 +204,7 @@ class MCStatus(commands.Cog):
     async def mc_setip(self, ctx, ip: str):
         """Change the target server IP dynamically."""
         self.server_ip = ip
-        await ctx.send(f"<a:tick:1489157731393994854> Server IP updated to `{self.server_ip}`. Run `,mc force` to update the panel.")
+        await ctx.send(f"{EMOJI['success']} Server IP updated to `{self.server_ip}`. Run `,mc force` to update the panel.")
 
     @mc.command(name="setchannel")
     @commands.has_permissions(manage_guild=True)
@@ -174,7 +213,7 @@ class MCStatus(commands.Cog):
         target_channel = channel or ctx.channel
         self.status_channel_id = target_channel.id
         self.status_message_id = None # Reset so it anchors a new message in the new channel
-        await ctx.send(f"<a:tick:1489157731393994854> Auto-updates will now be sent to {target_channel.mention}.")
+        await ctx.send(f"{EMOJI['success']} Auto-updates will now be sent to {target_channel.mention}.")
         await self._perform_update(ctx_for_reply=ctx)
 
 async def setup(bot):

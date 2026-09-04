@@ -1,8 +1,10 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import aiohttp
 import asyncio
 from datetime import datetime, timezone
+from cogs.utils.emoji_manager import EMOJI
 
 def _fmt_count(n: int) -> str:
     try:
@@ -38,7 +40,7 @@ class Instagram(commands.Cog):
 
     async def send_ban_embed(self, ctx, username: str):
         embed = discord.Embed(
-            title="🚫 Banned or Not Found",
+            title=f"{EMOJI['forbidden']} Banned or Not Found",
             description=f"The ID `{username}` is banned or does not exist on Instagram.",
             color=discord.Color.red()
         )
@@ -46,12 +48,18 @@ class Instagram(commands.Cog):
         embed.set_footer(text="Instagram Check • Bot by Kaori")
         await ctx.send(embed=embed)
 
-    @commands.command(name="check")
+    @commands.hybrid_command(name="check", description="Look up an Instagram profile by username.")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    @commands.cooldown(1, 15, commands.BucketType.user)
     async def check(self, ctx, username: str):
         """
-        .check <username>
-        • If username not found or banned → reports ban
-        • Otherwise → fetches and shows as many profile details as possible
+        /check <username>
+        - If the username isn't found or is banned, reports that.
+        - Otherwise fetches and shows as many profile details as possible.
+        Note: Instagram actively rate-limits/blocks scraping; if this starts
+        failing consistently it likely means Instagram changed or blocked the
+        endpoint on their end, not a bug in the bot.
         """
         async with ctx.typing():
             timeout = aiohttp.ClientTimeout(total=15)
@@ -64,14 +72,14 @@ class Instagram(commands.Cog):
                         allow_redirects=True
                     )
                 except asyncio.TimeoutError:
-                    return await ctx.send("<a:Alert1:1489188698191822908> Request timed out trying to reach Instagram.")
+                    return await ctx.send(f"{EMOJI['warning']} Request timed out trying to reach Instagram.")
                 except Exception as e:
-                    return await ctx.send(f"<a:Alert1:1489188698191822908> Network error: {e}")
+                    return await ctx.send(f"{EMOJI['warning']} Network error: {e}")
 
                 if base_resp.status == 404:
                     return await self.send_ban_embed(ctx, username)
                 if base_resp.status != 200:
-                    return await ctx.send(f"<a:Alert1:1489188698191822908> Could not reach Instagram (HTTP {base_resp.status}).")
+                    return await ctx.send(f"{EMOJI['warning']} Could not reach Instagram (HTTP {base_resp.status}).")
 
                 # 2) Fetch the JSON profile info
                 try:
@@ -80,22 +88,22 @@ class Instagram(commands.Cog):
                         headers=self.headers
                     )
                 except asyncio.TimeoutError:
-                    return await ctx.send("<a:Alert1:1489188698191822908> JSON request timed out.")
+                    return await ctx.send(f"{EMOJI['warning']} JSON request timed out.")
                 except Exception as e:
-                    return await ctx.send(f"<a:Alert1:1489188698191822908> JSON network error: {e}")
+                    return await ctx.send(f"{EMOJI['warning']} JSON network error: {e}")
 
                 if json_resp.status == 404:
                     return await self.send_ban_embed(ctx, username)
                 if json_resp.status != 200:
                     # Some profiles may block this endpoint or require cookies
-                    return await ctx.send(f"<a:Alert1:1489188698191822908> JSON endpoint returned HTTP {json_resp.status}.")
+                    return await ctx.send(f"{EMOJI['warning']} JSON endpoint returned HTTP {json_resp.status}.")
 
                 try:
                     payload = await json_resp.json()
                 except aiohttp.ContentTypeError:
                     return await self.send_ban_embed(ctx, username)
                 except Exception as e:
-                    return await ctx.send(f"<a:Alert1:1489188698191822908> Failed parsing JSON: {e}")
+                    return await ctx.send(f"{EMOJI['warning']} Failed parsing JSON: {e}")
 
                 # common places where user object might live
                 user = None
@@ -140,7 +148,7 @@ class Instagram(commands.Cog):
 
                 # Build the main embed
                 embed = discord.Embed(
-                    title=f"📷 {uname} ({fullname})",
+                    title=f"{EMOJI['camera']} {uname} ({fullname})",
                     url=self.base_url.format(username=uname),
                     description=_truncate(bio, 400) or "No bio.",
                     color=discord.Color.green()
@@ -150,30 +158,30 @@ class Instagram(commands.Cog):
                     embed.set_thumbnail(url=profile_pic)
 
                 # Basic fields
-                embed.add_field(name="🔢 ID", value=str(uid), inline=True)
-                embed.add_field(name="<a:users:1489162870057865336> Followers", value=_fmt_count(followers) if followers is not None else "N/A", inline=True)
-                embed.add_field(name="<:BlueScroll:1489151045933207643> Following", value=_fmt_count(following) if following is not None else "N/A", inline=True)
-                embed.add_field(name="🖼️ Posts", value=str(posts_count), inline=True)
-                embed.add_field(name="🔒 Private?", value="Yes" if private else "No", inline=True)
-                embed.add_field(name="✔️ Verified?", value="Yes" if verified else "No", inline=True)
-                embed.add_field(name="🏷️ Business?", value="Yes" if is_business else ("Yes" if is_prof else "No"), inline=True)
+                embed.add_field(name=f"{EMOJI['numbers']} ID", value=str(uid), inline=True)
+                embed.add_field(name=f"{EMOJI['users']} Followers", value=_fmt_count(followers) if followers is not None else "N/A", inline=True)
+                embed.add_field(name=f"{EMOJI['repeat']} Following", value=_fmt_count(following) if following is not None else "N/A", inline=True)
+                embed.add_field(name=f"{EMOJI['image']} Posts", value=str(posts_count), inline=True)
+                embed.add_field(name=f"{EMOJI['locked']} Private?", value="Yes" if private else "No", inline=True)
+                embed.add_field(name=f"{EMOJI['check']} Verified?", value="Yes" if verified else "No", inline=True)
+                embed.add_field(name=f"{EMOJI['tag']} Business?", value="Yes" if is_business else ("Yes" if is_prof else "No"), inline=True)
                 if category:
-                    embed.add_field(name="📚 Category", value=_truncate(str(category), 100), inline=True)
+                    embed.add_field(name=f"{EMOJI['books']} Category", value=_truncate(str(category), 100), inline=True)
 
                 # External / contact info if present
                 if ext_url:
-                    embed.add_field(name="🔗 External URL", value=_truncate(ext_url, 100), inline=False)
+                    embed.add_field(name=f"{EMOJI['link']} External URL", value=_truncate(ext_url, 100), inline=False)
 
                 # Try to show some contact info if available in JSON
                 pub_email = g("public_email") or g("public_email_address")
                 pub_phone = g("public_phone_number")
                 if pub_email:
-                    embed.add_field(name="✉️ Public Email", value=_truncate(pub_email, 100), inline=True)
+                    embed.add_field(name=f"{EMOJI['envelope']} Public Email", value=_truncate(pub_email, 100), inline=True)
                 if pub_phone:
-                    embed.add_field(name="📞 Public Phone", value=_truncate(pub_phone, 100), inline=True)
+                    embed.add_field(name=f"{EMOJI['phone']} Public Phone", value=_truncate(pub_phone, 100), inline=True)
 
                 if connected_fb:
-                    embed.add_field(name="🔗 Connected Facebook", value=_truncate(str(connected_fb), 100), inline=False)
+                    embed.add_field(name=f"{EMOJI['link']} Connected Facebook", value=_truncate(str(connected_fb), 100), inline=False)
 
                 # Try to include recent posts (up to 4)
                 recent = safe_count(user, "edge_owner_to_timeline_media", "edges")
@@ -201,9 +209,9 @@ class Instagram(commands.Cog):
                                 date = ""
                         stats = []
                         if likes is not None:
-                            stats.append(f"❤ {_fmt_count(likes)}")
+                            stats.append(f"{EMOJI['heart']} {_fmt_count(likes)}")
                         if is_video and views is not None:
-                            stats.append(f"▶ {_fmt_count(views)} views")
+                            stats.append(f"{EMOJI['play_icon']} {_fmt_count(views)} views")
                         info = " • ".join(stats) if stats else ""
                         line = f"{date} • {caption}" if caption else f"{date}"
                         if post_url:
@@ -213,11 +221,20 @@ class Instagram(commands.Cog):
                         post_lines.append(line)
                         posts_added += 1
                     if post_lines:
-                        embed.add_field(name=f"🧾 Recent posts ({posts_added})", value="\n".join(post_lines), inline=False)
+                        embed.add_field(name=f"{EMOJI['receipt']} Recent posts ({posts_added})", value="\n".join(post_lines), inline=False)
 
                 # Footer and send
                 embed.set_footer(text="Instagram Check • Bot by Kaori")
                 await ctx.send(embed=embed)
+
+    @check.error
+    async def check_error(self, ctx, error):
+        if isinstance(error, commands.CommandOnCooldown):
+            return await ctx.send(f"{EMOJI['clock']} Slow down — try again in {error.retry_after:.0f}s.")
+        if isinstance(error, commands.MissingRequiredArgument):
+            return await ctx.send(f"{EMOJI['warning']} Usage: `/check <username>`")
+        raise error
+
 
 async def setup(bot):
     await bot.add_cog(Instagram(bot))

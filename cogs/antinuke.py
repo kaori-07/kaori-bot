@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import aiosqlite
 import asyncio
 import datetime
@@ -7,8 +8,16 @@ from datetime import timedelta
 import pytz
 import random
 import os
+from cogs.utils.emoji_manager import EMOJI
 
-class antinuke(commands.Cog):
+# db files live under data/db/ alongside the rest of the bot's persistent storage
+_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+_DB_DIR = os.path.join(_DATA_DIR, "db")
+_ANTI_DB = os.path.join(_DB_DIR, "anti.db")
+_BLOCK_DB = os.path.join(_DB_DIR, "block.db")
+
+
+class AntiNuke(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.event_limits = {}
@@ -17,8 +26,8 @@ class antinuke(commands.Cog):
 
     async def cog_load(self):
         """Ensures the folders and databases exist on startup."""
-        os.makedirs('db', exist_ok=True)
-        async with aiosqlite.connect('db/anti.db') as db:
+        os.makedirs(_DB_DIR, exist_ok=True)
+        async with aiosqlite.connect(_ANTI_DB) as db:
             await db.execute('''CREATE TABLE IF NOT EXISTS antinuke (guild_id TEXT PRIMARY KEY, status INTEGER)''')
             await db.execute('''CREATE TABLE IF NOT EXISTS extraowners (guild_id TEXT, owner_id TEXT)''')
             await db.execute('''CREATE TABLE IF NOT EXISTS whitelisted_users (
@@ -28,7 +37,7 @@ class antinuke(commands.Cog):
                                 serverup INTEGER, mngweb INTEGER)''')
             await db.commit()
 
-        async with aiosqlite.connect('db/block.db') as db:
+        async with aiosqlite.connect(_BLOCK_DB) as db:
             await db.execute('''CREATE TABLE IF NOT EXISTS guild_blacklist (guild_id TEXT PRIMARY KEY)''')
             await db.commit()
 
@@ -39,7 +48,7 @@ class antinuke(commands.Cog):
         """Custom check to ensure ONLY the server owner can run specific commands."""
         async def predicate(ctx):
             if ctx.author.id != ctx.guild.owner_id and not await ctx.bot.is_owner(ctx.author):
-                embed = discord.Embed(title="<a:Cross_:1489174755537064046> Access Denied", description="Only the Server Owner can use this command.", color=discord.Color.red())
+                embed = discord.Embed(title=f"{EMOJI['error']} Access Denied", description="Only the Server Owner can use this command.", color=discord.Color.red())
                 await ctx.send(embed=embed, ephemeral=True)
                 return False
             return True
@@ -65,7 +74,7 @@ class antinuke(commands.Cog):
             except Exception:
                 return # Give up if bot lacks permissions to create channel
 
-        embed = discord.Embed(title=f"<a:Alert1:1489188698191822908> {action_title}", description=description, color=color, timestamp=discord.utils.utcnow())
+        embed = discord.Embed(title=f"{EMOJI['warning']} {action_title}", description=description, color=color, timestamp=discord.utils.utcnow())
         embed.add_field(name="Offender", value=f"{user.mention} (`{user.id}`)", inline=True)
         embed.set_thumbnail(url=user.display_avatar.url if user.display_avatar else None)
         embed.set_footer(text="Automated Security System", icon_url=self.bot.user.display_avatar.url)
@@ -76,7 +85,7 @@ class antinuke(commands.Cog):
             pass
 
     async def is_blacklisted_guild(self, guild_id):
-        async with aiosqlite.connect('db/block.db') as block_db:
+        async with aiosqlite.connect(_BLOCK_DB) as block_db:
             cursor = await block_db.execute("SELECT 1 FROM guild_blacklist WHERE guild_id = ?", (str(guild_id),))
             return await cursor.fetchone() is not None
 
@@ -96,7 +105,7 @@ class antinuke(commands.Cog):
             return False
         return True
 
-    async def fetch_audit_logs(self, guild, action, target_id=None, delay=0.0):
+    async def fetch_audit_logs(self, guild, action, target_id=None, delay=0.0, _retries=3):
         try:
             if delay > 0: await asyncio.sleep(delay)
             async for entry in guild.audit_logs(action=action, limit=1):
@@ -105,15 +114,15 @@ class antinuke(commands.Cog):
                 if (now - entry.created_at).total_seconds() * 1000 >= 3600000: return None
                 return entry
         except discord.HTTPException as e:
-            if e.status == 429:
+            if e.status == 429 and _retries > 0:
                 await asyncio.sleep(float(e.response.headers.get('Retry-After', 1.0)))
-                return await self.fetch_audit_logs(guild, action, target_id, delay)
+                return await self.fetch_audit_logs(guild, action, target_id, delay, _retries - 1)
         except Exception: pass
         return None
 
     async def check_permissions(self, guild, executor_id, module_col):
         if executor_id in {guild.owner_id, self.bot.user.id}: return True
-        async with aiosqlite.connect('db/anti.db') as db:
+        async with aiosqlite.connect(_ANTI_DB) as db:
             async with db.execute("SELECT status FROM antinuke WHERE guild_id = ?", (str(guild.id),)) as cursor:
                 status = await cursor.fetchone()
                 if not status or not status[0]: return True # System is off
@@ -149,7 +158,7 @@ class antinuke(commands.Cog):
             except Exception: break
         
         if success:
-            action_emoji = "🔨" if action == "ban" else "<a:Kick:1489189035736825866>" if action == "kick" else "⏳"
+            action_emoji = f"{EMOJI['hammer']}" if action == "ban" else f"{EMOJI['boot_kick']}" if action == "kick" else f"{EMOJI['loading']}"
             await self.send_log(guild, f"{action_emoji} User Punished: {action.capitalize()}", f"**Reason:** {reason}\n**Status:** Successfully protected the server.", user)
         return success
 
@@ -158,9 +167,12 @@ class antinuke(commands.Cog):
     # ==========================================
 
     @commands.hybrid_command(name="antinuke_toggle", description="Turn the Antinuke system ON or OFF")
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     @commands.has_permissions(administrator=True)
     async def antinuke_toggle(self, ctx):
-        async with aiosqlite.connect('db/anti.db') as db:
+        async with aiosqlite.connect(_ANTI_DB) as db:
             async with db.execute("SELECT status FROM antinuke WHERE guild_id = ?", (str(ctx.guild.id),)) as cursor:
                 row = await cursor.fetchone()
             
@@ -172,66 +184,73 @@ class antinuke(commands.Cog):
                 await db.execute("INSERT INTO antinuke (guild_id, status) VALUES (?, ?)", (str(ctx.guild.id), new_status))
             await db.commit()
 
-        state = "Enabled <a:tick:1489157731393994854>" if new_status else "Disabled <a:Cross_:1489174755537064046>"
+        state = f"Enabled {EMOJI['success']}" if new_status else f"Disabled {EMOJI['error']}"
         color = discord.Color.green() if new_status else discord.Color.red()
-        embed = discord.Embed(title="🛡️ Shield Status Updated", description=f"The Antinuke System is now **{state}**.", color=color)
+        embed = discord.Embed(title=f"{EMOJI['shield']} Shield Status Updated", description=f"The Antinuke System is now **{state}**.", color=color)
         await ctx.send(embed=embed)
         if new_status:
-            await self.send_log(ctx.guild, "🛡️ System Enabled", "The anti-nuke shield was turned on.", ctx.author, discord.Color.green())
+            await self.send_log(ctx.guild, f"{EMOJI['shield']} System Enabled", "The anti-nuke shield was turned on.", ctx.author, discord.Color.green())
 
     @commands.hybrid_command(name="antinuke_status", description="Check the status of the Antinuke system")
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     @commands.has_permissions(administrator=True)
     async def antinuke_status(self, ctx):
-        async with aiosqlite.connect('db/anti.db') as db:
+        async with aiosqlite.connect(_ANTI_DB) as db:
             async with db.execute("SELECT status FROM antinuke WHERE guild_id = ?", (str(ctx.guild.id),)) as cursor:
                 status = await cursor.fetchone()
                 
-        state = "Enabled <a:tick:1489157731393994854>" if status and status[0] else "Disabled <a:Cross_:1489174755537064046>"
+        state = f"Enabled {EMOJI['success']}" if status and status[0] else f"Disabled {EMOJI['error']}"
         color = discord.Color.green() if status and status[0] else discord.Color.red()
-        embed = discord.Embed(title="🛡️ Antinuke Status", description=f"The system is currently **{state}**.\n\n*Use `/antinuke_toggle` to change this.\nUse `/whitelist` to allow specific users.*", color=color)
+        embed = discord.Embed(title=f"{EMOJI['shield']} Antinuke Status", description=f"The system is currently **{state}**.\n\n*Use `/antinuke_toggle` to change this.\nUse `/whitelist` to allow specific users.*", color=color)
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="whitelist", description="Whitelist a user so the bot ignores their actions.")
+    @commands.command(name="whitelist", description="Whitelist a user so the bot ignores their actions.")
+    @commands.guild_only()
     @is_server_owner()
     async def whitelist_user(self, ctx, user: discord.Member):
-        async with aiosqlite.connect('db/anti.db') as db:
+        async with aiosqlite.connect(_ANTI_DB) as db:
             await db.execute("DELETE FROM whitelisted_users WHERE guild_id = ? AND user_id = ?", (str(ctx.guild.id), str(user.id)))
             await db.execute("""INSERT INTO whitelisted_users 
                 (guild_id, user_id, chcr, chdl, chup, mngstemo, meneve, memup, ban, kick, prune, botadd, rlcr, rldl, rlup, serverup, mngweb) 
                 VALUES (?, ?, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)""", (str(ctx.guild.id), str(user.id)))
             await db.commit()
             
-        embed = discord.Embed(title="<a:tick:1489157731393994854> User Whitelisted", description=f"{user.mention} is now fully whitelisted and can bypass the antinuke.", color=discord.Color.green())
+        embed = discord.Embed(title=f"{EMOJI['success']} User Whitelisted", description=f"{user.mention} is now fully whitelisted and can bypass the antinuke.", color=discord.Color.green())
         await ctx.send(embed=embed)
-        await self.send_log(ctx.guild, "<a:tick:1489157731393994854> Whitelist Added", f"{user.mention} was whitelisted by {ctx.author.mention}.", user, discord.Color.green())
+        await self.send_log(ctx.guild, f"{EMOJI['success']} Whitelist Added", f"{user.mention} was whitelisted by {ctx.author.mention}.", user, discord.Color.green())
 
-    @commands.hybrid_command(name="unwhitelist", description="Remove a user from the whitelist.")
+    @commands.command(name="unwhitelist", description="Remove a user from the whitelist.")
+    @commands.guild_only()
     @is_server_owner()
     async def unwhitelist_user(self, ctx, user: discord.Member):
-        async with aiosqlite.connect('db/anti.db') as db:
+        async with aiosqlite.connect(_ANTI_DB) as db:
             await db.execute("DELETE FROM whitelisted_users WHERE guild_id = ? AND user_id = ?", (str(ctx.guild.id), str(user.id)))
             await db.commit()
             
-        embed = discord.Embed(title="<a:Cross_:1489174755537064046> Whitelist Removed", description=f"{user.mention} has been removed from the whitelist.", color=discord.Color.red())
+        embed = discord.Embed(title=f"{EMOJI['error']} Whitelist Removed", description=f"{user.mention} has been removed from the whitelist.", color=discord.Color.red())
         await ctx.send(embed=embed)
-        await self.send_log(ctx.guild, "<a:Cross_:1489174755537064046> Whitelist Removed", f"{user.mention}'s whitelist was removed by {ctx.author.mention}.", user, discord.Color.orange())
+        await self.send_log(ctx.guild, f"{EMOJI['error']} Whitelist Removed", f"{user.mention}'s whitelist was removed by {ctx.author.mention}.", user, discord.Color.orange())
 
-    @commands.hybrid_command(name="trust_admin", description="Add an extra owner to the bot's highest trust tier.")
+    @commands.command(name="trust_admin", description="Add an extra owner to the bot's highest trust tier.")
+    @commands.guild_only()
     @is_server_owner()
     async def add_extra_owner(self, ctx, user: discord.Member):
-        async with aiosqlite.connect('db/anti.db') as db:
+        async with aiosqlite.connect(_ANTI_DB) as db:
             await db.execute("INSERT INTO extraowners (guild_id, owner_id) VALUES (?, ?)", (str(ctx.guild.id), str(user.id)))
             await db.commit()
-        embed = discord.Embed(title="👑 Admin Trusted", description=f"{user.mention} is now considered an Extra Owner.", color=discord.Color.gold())
+        embed = discord.Embed(title=f"{EMOJI['crown']} Admin Trusted", description=f"{user.mention} is now considered an Extra Owner.", color=discord.Color.gold())
         await ctx.send(embed=embed)
 
-    @commands.hybrid_command(name="untrust_admin", description="Remove an extra owner.")
+    @commands.command(name="untrust_admin", description="Remove an extra owner.")
+    @commands.guild_only()
     @is_server_owner()
     async def remove_extra_owner(self, ctx, user: discord.Member):
-        async with aiosqlite.connect('db/anti.db') as db:
+        async with aiosqlite.connect(_ANTI_DB) as db:
             await db.execute("DELETE FROM extraowners WHERE guild_id = ? AND owner_id = ?", (str(ctx.guild.id), str(user.id)))
             await db.commit()
-        embed = discord.Embed(title="🛑 Trust Removed", description=f"{user.mention} is no longer an Extra Owner.", color=discord.Color.red())
+        embed = discord.Embed(title=f"{EMOJI['stop_sign']} Trust Removed", description=f"{user.mention} is no longer an Extra Owner.", color=discord.Color.red())
         await ctx.send(embed=embed)
 
     # ==========================================
@@ -248,7 +267,7 @@ class antinuke(commands.Cog):
             if not self.can_fetch_audit(guild.id, 'mention_everyone') or await self.check_permissions(guild, message.author.id, "meneve"): return
             try:
                 await message.author.edit(timed_out_until=discord.utils.utcnow() + timedelta(hours=1), reason="Mentioned Everyone/Here | Unwhitelisted User")
-                await self.send_log(guild, "⏳ User Muted (1 Hour)", f"**Reason:** Attempted mass ping (@everyone/@here)", message.author)
+                await self.send_log(guild, f"{EMOJI['loading']} User Muted (1 Hour)", f"**Reason:** Attempted mass ping (@everyone/@here)", message.author)
                 async for msg in message.channel.history(limit=100):
                     if msg.mention_everyone: await msg.delete()
             except Exception: pass
@@ -482,4 +501,4 @@ class antinuke(commands.Cog):
 
 
 async def setup(bot):
-    await bot.add_cog(antinuke(bot))
+    await bot.add_cog(AntiNuke(bot))

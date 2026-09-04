@@ -1,0 +1,73 @@
+{% extends "_shell.html" %}
+{% block title %}Music — Control Panel{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow">Voice</p>
+    <h1>Music</h1>
+  </div>
+  <span class="pill pill-on">{{ players|length }} active</span>
+</header>
+
+{% if not bot_online %}
+<section class="panel reveal"><p class="panel-sub">Bot is offline — connect it to control music.</p></section>
+{% elif not players %}
+<section class="panel reveal"><p class="panel-sub">Nothing is playing anywhere right now.</p></section>
+{% else %}
+<section class="panel reveal" style="--delay: 40ms">
+  <div class="cog-list">
+    {% for p in players %}
+    <div class="player-card reveal-item" style="animation-delay: {{ loop.index0 * 30 }}ms">
+      <div class="player-head">
+        <span class="player-guild">{{ p.guild_name }}</span>
+        <span class="pill {{ 'pill-on' if p.playing else 'pill-off' }}">
+          {{ 'playing' if p.playing else ('paused' if p.paused else 'idle') }}
+        </span>
+      </div>
+
+      {% if p.now_title %}
+      <div class="player-track">
+        {% if p.now_url %}<a href="{{ p.now_url }}" target="_blank" rel="noopener">{{ p.now_title }}</a>{% else %}{{ p.now_title }}{% endif %}
+      </div>
+      {% else %}
+      <div class="player-track muted">Nothing queued</div>
+      {% endif %}
+
+      <div class="player-meta-row">
+        <span>Queue: <strong class="mono">{{ p.queue_len }}</strong></span>
+        <span>Repeat: <strong class="mono">{{ p.repeat }}</strong></span>
+        <span>Volume: <strong class="mono">{{ p.volume }}%</strong></span>
+      </div>
+
+      <div class="player-controls">
+        <form method="post" action="{{ url_for('music_action', guild_id=p.guild_id, action='pause') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost btn-sm">Pause</button>
+        </form>
+        <form method="post" action="{{ url_for('music_action', guild_id=p.guild_id, action='resume') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost btn-sm">Resume</button>
+        </form>
+        <form method="post" action="{{ url_for('music_action', guild_id=p.guild_id, action='skip') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost btn-sm">Skip</button>
+        </form>
+        <form method="post" action="{{ url_for('music_action', guild_id=p.guild_id, action='stop') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-danger-ghost btn-sm">Stop</button>
+        </form>
+      </div>
+
+      <form method="post" action="{{ url_for('music_volume', guild_id=p.guild_id) }}" class="volume-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="range" name="volume" min="0" max="100" value="{{ p.volume }}">
+        <button type="submit" class="btn btn-ghost btn-sm">Set volume</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% endblock %}

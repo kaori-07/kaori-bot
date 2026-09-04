@@ -2,15 +2,18 @@
 import discord
 from discord.ext import commands, tasks
 import asyncio
-import json
-import os
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+from cogs.utils.emoji_manager import EMOJI
+from cogs.utils.json_store import get_store
+
+STATUS_CONFIG_FILE = "status_config.json"
 
 # default config template
 DEFAULT_CONFIG = {
     "rotation_interval": 15,
     "twitch_channel": None,
+    "running": False,
     "panel": {
         "channel_id": None,
         "message_id": None
@@ -22,34 +25,33 @@ def owner_check():
     return commands.is_owner()
 
 class StatusRotator(commands.Cog):
-    """Bot cog: rotates presence and maintains a panel embed with image + up to 2 link buttons."""
+    """Rich presence / status rotator cog: rotates the bot's presence on a timer and
+    maintains an optional panel embed with image + up to 2 link buttons.
+
+    Config lives in data/status_config.json via the shared JSON store, so the
+    web dashboard reads/writes the exact same in-memory data (no desync).
+    Rotation automatically resumes on startup if it was left running before
+    the last restart.
+    """
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.config_path = f"status_config_{getattr(bot.user, 'id', 'unknown')}.json"
-        self._ensure_config()
+        self.store = get_store(STATUS_CONFIG_FILE, lambda: dict(DEFAULT_CONFIG))
         self._rotation_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
         self._current_index = 0
 
-    # ---------- config helpers ----------
-    def _ensure_config(self):
-        if not os.path.isfile(self.config_path):
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump(DEFAULT_CONFIG, f, indent=2)
+    async def cog_load(self):
+        cfg = self._load_config()
+        if cfg.get("running") and cfg.get("entries"):
+            await self._start_rotation()
 
+    # ---------- config helpers ----------
     def _load_config(self) -> Dict[str, Any]:
-        try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump(DEFAULT_CONFIG, f, indent=2)
-            return dict(DEFAULT_CONFIG)
+        return self.store.read()
 
     def _save_config(self, cfg: Dict[str, Any]):
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
+        self.store.save(cfg)
 
     # ---------- utility ----------
     async def _dm_owner(self, user: discord.User, message: str):
@@ -109,7 +111,7 @@ class StatusRotator(commands.Cog):
         sent = await ctx.channel.send(embed=emb, view=view)
         cfg["panel"]["message_id"] = sent.id
         self._save_config(cfg)
-        await self._dm_owner(ctx.author, f"<a:tick:1489157731393994854> Panel posted in {ctx.channel.mention} (message id {sent.id}).")
+        await self._dm_owner(ctx.author, f"{EMOJI['success']} Panel posted in {ctx.channel.mention} (message id {sent.id}).")
 
     @status_setpanel.error
     async def status_setpanel_error(self, ctx, error):
@@ -145,10 +147,10 @@ class StatusRotator(commands.Cog):
         sent = await ctx.channel.send(embed=emb, view=view)
         cfg["panel"]["message_id"] = sent.id
         self._save_config(cfg)
-        await self._dm_owner(ctx.author, f"<a:tick:1489157731393994854> Panel posted in {ctx.channel.mention} (message id {sent.id}).")
+        await self._dm_owner(ctx.author, f"{EMOJI['success']} Panel posted in {ctx.channel.mention} (message id {sent.id}).")
 
     # ---------- entry management (owner-only) ----------
-    @commands.command(name="status_add", help="Add entry: .status_add <type>|<status>|<name>|[image_url]|[button1_label]|[button1_url]|[button2_label]|[button2_url]|[interval]|[stream_url]")
+    @commands.command(name="status_add", help="Add entry: .status_add <type>|<status>|<name>|[image_url]|[button1_label]|[button1_url]|[button2_label]|[button2_url]|[interval]|[stream_url]|[emoji]")
     @owner_check()
     async def status_add(self, ctx: commands.Context, *, raw: str):
         try:
@@ -158,7 +160,7 @@ class StatusRotator(commands.Cog):
 
         parts = [p.strip() for p in raw.split("|")]
         if len(parts) < 3:
-            await self._dm_owner(ctx.author, "Usage: .status_add <type>|<status>|<name>|[image_url]|[button1_label]|[button1_url]|[button2_label]|[button2_url]|[interval]|[stream_url]")
+            await self._dm_owner(ctx.author, "Usage: .status_add <type>|<status>|<name>|[image_url]|[button1_label]|[button1_url]|[button2_label]|[button2_url]|[interval]|[stream_url]|[emoji]\nTypes: game, streaming, listening, watching, competing, custom")
             return
 
         type_ = parts[0].lower()
@@ -180,6 +182,7 @@ class StatusRotator(commands.Cog):
                 interval = None
 
         stream_url = parts[9] if len(parts) >= 10 and parts[9] else None
+        emoji = parts[10] if len(parts) >= 11 and parts[10] else None
 
         entry = {"type": type_, "status": status, "name": name}
         if image:
@@ -190,11 +193,13 @@ class StatusRotator(commands.Cog):
             entry["interval"] = interval
         if stream_url:
             entry["stream_url"] = stream_url
+        if emoji:
+            entry["emoji"] = emoji
 
         cfg = self._load_config()
         cfg.setdefault("entries", []).append(entry)
         self._save_config(cfg)
-        await self._dm_owner(ctx.author, f"<a:tick:1489157731393994854> Added entry `{name}` (type={type_}).")
+        await self._dm_owner(ctx.author, f"{EMOJI['success']} Added entry `{name}` (type={type_}).")
 
     @commands.command(name="status_list", help="List configured entries (owner-only).")
     @owner_check()
@@ -206,7 +211,7 @@ class StatusRotator(commands.Cog):
         cfg = self._load_config()
         entries = cfg.get("entries", [])
         if not entries:
-            await self._dm_owner(ctx.author, "<a:Alert1:1489188698191822908> No entries configured.")
+            await self._dm_owner(ctx.author, f"{EMOJI['warning']} No entries configured.")
             return
         lines = []
         for i, e in enumerate(entries):
@@ -225,9 +230,9 @@ class StatusRotator(commands.Cog):
         try:
             removed = cfg["entries"].pop(index)
             self._save_config(cfg)
-            await self._dm_owner(ctx.author, f"🗑️ Removed `{removed.get('name')}`.")
+            await self._dm_owner(ctx.author, f"{EMOJI['trash']} Removed `{removed.get('name')}`.")
         except Exception:
-            await self._dm_owner(ctx.author, "<a:Cross_:1489174755537064046> Invalid index. Use .status_list to see indexes.")
+            await self._dm_owner(ctx.author, f"{EMOJI['error']} Invalid index. Use .status_list to see indexes.")
 
     @commands.command(name="status_setinterval", help="Set global rotation interval (owner-only).")
     @owner_check()
@@ -239,7 +244,7 @@ class StatusRotator(commands.Cog):
         cfg = self._load_config()
         cfg["rotation_interval"] = seconds
         self._save_config(cfg)
-        await self._dm_owner(ctx.author, f"⏱️ Global rotation interval set to {seconds}s.")
+        await self._dm_owner(ctx.author, f"{EMOJI['clock']} Global rotation interval set to {seconds}s.")
 
     @commands.command(name="start_rotation", help="Start rotating statuses (owner-only).")
     @owner_check()
@@ -249,7 +254,7 @@ class StatusRotator(commands.Cog):
         except Exception:
             pass
         started = await self._start_rotation()
-        await self._dm_owner(ctx.author, "<a:tick:1489157731393994854> Rotation started." if started else "<a:Alert1:1489188698191822908> Rotation already running.")
+        await self._dm_owner(ctx.author, f"{EMOJI['success']} Rotation started." if started else f"{EMOJI['warning']} Rotation already running.")
 
     @commands.command(name="stop_rotation", help="Stop rotating statuses (owner-only).")
     @owner_check()
@@ -259,7 +264,7 @@ class StatusRotator(commands.Cog):
         except Exception:
             pass
         stopped = await self._stop_rotation()
-        await self._dm_owner(ctx.author, "⏹️ Rotation stopped." if stopped else "<a:Alert1:1489188698191822908> Rotation was not running.")
+        await self._dm_owner(ctx.author, f"{EMOJI['stop_icon']} Rotation stopped." if stopped else f"{EMOJI['warning']} Rotation was not running.")
 
     @commands.command(name="status_preview", help="DM preview of an entry (owner-only): .status_preview [index]")
     @owner_check()
@@ -271,13 +276,13 @@ class StatusRotator(commands.Cog):
         cfg = self._load_config()
         entries = cfg.get("entries", [])
         if not entries:
-            await self._dm_owner(ctx.author, "<a:Alert1:1489188698191822908> No entries configured.")
+            await self._dm_owner(ctx.author, f"{EMOJI['warning']} No entries configured.")
             return
         if index < 0 or index >= len(entries):
-            await self._dm_owner(ctx.author, f"<a:Cross_:1489174755537064046> Invalid index (0..{len(entries)-1}).")
+            await self._dm_owner(ctx.author, f"{EMOJI['error']} Invalid index (0..{len(entries)-1}).")
             return
         e = entries[index]
-        text = f"Preview → [{e.get('type')}/{e.get('status')}] {e.get('name')}\n"
+        text = f"Preview {EMOJI['rightwards_arrow']} [{e.get('type')}/{e.get('status')}] {e.get('name')}\n"
         if e.get("image"):
             text += f"Image URL: {e.get('image')}\n"
         if e.get("buttons"):
@@ -292,11 +297,17 @@ class StatusRotator(commands.Cog):
                 return False
             self._stop_event.clear()
             self._rotation_task = asyncio.create_task(self._rotation_loop())
+            cfg = self._load_config()
+            cfg["running"] = True
+            self._save_config(cfg)
             return True
 
     async def _stop_rotation(self) -> bool:
         async with self._lock:
             if not self._rotation_task or self._rotation_task.done():
+                cfg = self._load_config()
+                cfg["running"] = False
+                self._save_config(cfg)
                 return False
             self._stop_event.set()
             self._rotation_task.cancel()
@@ -309,6 +320,9 @@ class StatusRotator(commands.Cog):
                 await self.bot.change_presence(status=discord.Status.online, activity=None)
             except Exception:
                 pass
+            cfg = self._load_config()
+            cfg["running"] = False
+            self._save_config(cfg)
             return True
 
     async def _rotation_loop(self):
@@ -361,6 +375,19 @@ class StatusRotator(commands.Cog):
                 activity = discord.Activity(type=discord.ActivityType.listening, name=name)
             elif etype == "watching":
                 activity = discord.Activity(type=discord.ActivityType.watching, name=name)
+            elif etype == "competing":
+                activity = discord.Activity(type=discord.ActivityType.competing, name=name)
+            elif etype == "custom":
+                # Custom status: just the raw state text (no "Playing/Watching" prefix),
+                # optionally with a leading emoji - the only presence type that supports one.
+                emoji_val = entry.get("emoji")
+                emoji_obj = None
+                if emoji_val:
+                    try:
+                        emoji_obj = discord.PartialEmoji.from_str(emoji_val)
+                    except Exception:
+                        emoji_obj = discord.PartialEmoji(name=emoji_val)
+                activity = discord.CustomActivity(name=name, emoji=emoji_obj)
             else:
                 activity = discord.Game(name=name)
             await self.bot.change_presence(status=status_obj, activity=activity)

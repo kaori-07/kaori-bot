@@ -1,0 +1,48 @@
+{% extends "_shell.html" %}
+{% block title %}Server Logs — Control Panel{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow">Audit trail</p>
+    <h1>Server Logs</h1>
+  </div>
+</header>
+
+<p class="panel-sub reveal" style="--delay: 20ms">
+  Set the log channel per server with <code>/logs_setchannel</code>, then toggle individual event types here.
+</p>
+
+{% if not bot_online %}
+<section class="panel reveal"><p class="panel-sub">Bot is offline — connect it to manage server logs.</p></section>
+{% elif not guilds_info %}
+<section class="panel reveal"><p class="panel-sub">No servers found.</p></section>
+{% else %}
+{% for g in guilds_info %}
+<section class="panel reveal" style="--delay: {{ 40 + loop.index0 * 30 }}ms">
+  <div class="panel-head">
+    <h2>{{ g.name }}</h2>
+    {% if g.channel_name %}
+    <span class="pill pill-on mono">#{{ g.channel_name }}</span>
+    {% else %}
+    <span class="pill pill-off">no channel set</span>
+    {% endif %}
+  </div>
+  <div class="cog-list">
+    {% for event in log_events %}
+    <div class="cog-row">
+      <span class="cog-name">{{ event }}</span>
+      <form method="post" action="{{ url_for('serverlogs_toggle', guild_id=g.id, event=event) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="switch {{ 'switch-on' if g.events.get(event, True) else '' }}" aria-label="Toggle {{ event }}">
+          <span class="switch-knob"></span>
+        </button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+{% endif %}
+
+{% endblock %}

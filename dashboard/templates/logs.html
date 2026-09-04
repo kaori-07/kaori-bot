@@ -1,0 +1,29 @@
+{% extends "_shell.html" %}
+{% block title %}Live Logs — Control Panel{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow">Realtime</p>
+    <h1>Live Logs</h1>
+  </div>
+  <div class="btn-row">
+    <span class="pill pill-on" id="logs-live-pill">● live</span>
+    <button class="btn btn-ghost btn-sm" id="clear-logs">Clear view</button>
+  </div>
+</header>
+
+<section class="panel reveal" style="--delay: 40ms">
+  <div class="console" id="console" data-last-id="{{ initial_logs[-1].id if initial_logs else 0 }}">
+    {% for entry in initial_logs %}
+    <div class="console-line level-{{ entry.level|lower }}">
+      <span class="console-lvl">{{ entry.level }}</span>
+      <span class="console-msg">{{ entry.message }}</span>
+    </div>
+    {% else %}
+    <div class="console-line level-info"><span class="console-msg muted">Waiting for log activity…</span></div>
+    {% endfor %}
+  </div>
+</section>
+
+{% endblock %}

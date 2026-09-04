@@ -1,0 +1,48 @@
+{% extends "_shell.html" %}
+{% block title %}Anti-Nuke — Control Panel{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow">Protection</p>
+    <h1>Anti-Nuke</h1>
+  </div>
+  <span class="pill pill-on">{{ guild_cards|length }} server{{ 's' if guild_cards|length != 1 else '' }}</span>
+</header>
+
+<p class="panel-sub reveal" style="--delay: 20ms">
+  Toggle protection per server and manage whitelisted users / trusted admins.
+</p>
+
+{% if not guild_cards %}
+<section class="panel reveal"><p class="panel-sub">No servers found yet.</p></section>
+{% else %}
+<section class="panel reveal" style="--delay: 40ms">
+  <div class="cog-list">
+    {% for g in guild_cards %}
+    <div class="antinuke-card reveal-item" style="animation-delay: {{ loop.index0 * 30 }}ms">
+      <div class="antinuke-head">
+        <div class="cog-info">
+          {% if g.icon_url %}<img class="guild-icon" src="{{ g.icon_url }}" alt="" style="width:32px;height:32px;">{% endif %}
+          <span class="cog-name" style="font-family: var(--font-body); font-size: 14px; font-weight: 600;">{{ g.name }}</span>
+          <span class="pill {{ 'pill-on' if g.enabled else 'pill-off' }}">{{ 'protected' if g.enabled else 'off' }}</span>
+        </div>
+        <form method="post" action="{{ url_for('antinuke_toggle', guild_id=g.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="switch {{ 'switch-on' if g.enabled else '' }}" aria-label="Toggle anti-nuke for {{ g.name }}">
+            <span class="switch-knob"></span>
+          </button>
+        </form>
+      </div>
+      <div class="antinuke-stats">
+        <span><strong>{{ g.whitelisted }}</strong> whitelisted</span>
+        <span><strong>{{ g.extra_owners }}</strong> trusted admins</span>
+      </div>
+      <a href="{{ url_for('antinuke_whitelist', guild_id=g.id) }}" class="btn btn-ghost btn-sm" style="align-self: flex-start;">Manage whitelist →</a>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% endblock %}

@@ -8,9 +8,12 @@ import asyncio
 from typing import Optional
 import pytz
 import os
+from cogs.utils.emoji_manager import EMOJI
 
 IST = pytz.timezone('Asia/Kolkata')
-GWY_FILE = "gwy.json"
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+GWY_FILE = os.path.join(DATA_DIR, "gwy.json")
 
 if not os.path.exists(GWY_FILE):
     with open(GWY_FILE, "w") as f:
@@ -18,7 +21,7 @@ if not os.path.exists(GWY_FILE):
 
 class RerollButton(ui.Button):
     def __init__(self, message_id: str, giveaway_data: dict):
-        super().__init__(label="Reroll", emoji="<:BlueScroll:1489151045933207643>", style=discord.ButtonStyle.red, custom_id="reroll_button")
+        super().__init__(label=f"{EMOJI['repeat']} Reroll", style=discord.ButtonStyle.red, custom_id="reroll_button")
         self.message_id = message_id
         self.giveaway_data = giveaway_data
 
@@ -37,7 +40,7 @@ class RerollButton(ui.Button):
         mentions = [f"<@{uid}>" for uid in winners]
 
         embed = discord.Embed(
-            title="<:BlueScroll:1489151045933207643> Giveaway Rerolled!",
+            title=f"{EMOJI['repeat']} Giveaway Rerolled!",
             description=f"**Prize:** {prize}\n**New Winner(s):** {', '.join(mentions)}",
             color=discord.Color.purple()
         )
@@ -48,7 +51,7 @@ class RerollButton(ui.Button):
         for winner in winners:
             try:
                 user = await interaction.client.fetch_user(int(winner))
-                await user.send(f"<:BlueScroll:1489151045933207643> You've been rerolled as a new winner for **{prize}** in **{interaction.guild.name}**!")
+                await user.send(f"{EMOJI['repeat']} You've been rerolled as a new winner for **{prize}** in **{interaction.guild.name}**!")
             except:
                 pass
 
@@ -64,7 +67,7 @@ class GiveawayButton(ui.View):
         if self.ended:
             self.add_item(RerollButton(self.message_id, self.giveaway_data))
 
-    @ui.button(label="Join", emoji="<a:prizes:1489156992512557216>", style=discord.ButtonStyle.green, custom_id="join_giveaway")
+    @ui.button(label=f"{EMOJI['party']} Join", style=discord.ButtonStyle.green, custom_id="join_giveaway")
     async def join_button(self, interaction: discord.Interaction, button: ui.Button):
         if self.ended:
             return await interaction.response.send_message("This giveaway has already ended.", ephemeral=True)
@@ -86,9 +89,9 @@ class GiveawayButton(ui.View):
         with open(GWY_FILE, "w") as f:
             json.dump(data, f, indent=4)
 
-        await interaction.response.send_message("You've joined the giveaway! <a:prizes:1489156992512557216>", ephemeral=True)
+        await interaction.response.send_message(f"You've joined the giveaway! {EMOJI['party']}", ephemeral=True)
 
-    @ui.button(label="Participants", emoji="<a:users:1489162870057865336>", style=discord.ButtonStyle.blurple, custom_id="view_participants")
+    @ui.button(label=f"{EMOJI['users']} Participants", style=discord.ButtonStyle.blurple, custom_id="view_participants")
     async def view_button(self, interaction: discord.Interaction, button: ui.Button):
         with open(GWY_FILE, "r") as f:
             data = json.load(f)
@@ -99,7 +102,7 @@ class GiveawayButton(ui.View):
         participants = data[self.message_id]["participants"]
         member_list = [f"<@{user_id}>" for user_id in participants]
 
-        embed = discord.Embed(title="🎟️ Participants", description="\n".join(member_list) or "No participants yet!", color=discord.Color.blurple())
+        embed = discord.Embed(title=f"{EMOJI['ticket_alt']} Participants", description="\n".join(member_list) or "No participants yet!", color=discord.Color.blurple())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class Giveaway(commands.Cog):
@@ -139,22 +142,22 @@ class Giveaway(commands.Cog):
                 host = f"<@{details['host_id']}>"
 
                 embed = discord.Embed(
-                    title="<a:prizes:1489156992512557216> Giveaway Ended!",
+                    title=f"{EMOJI['party']} Giveaway Ended!",
                     description=f"**Prize:** {details['prize']}",
                     color=discord.Color.gold()
                 )
-                embed.add_field(name="🏆 Winner(s)", value="\n".join(winner_mentions), inline=False)
-                embed.add_field(name="👤 Hosted by", value=host, inline=True)
-                embed.set_footer(text="Giveaway ended <a:gift_:1489165623165583371>")
+                embed.add_field(name=f"{EMOJI['trophy']} Winner(s)", value="\n".join(winner_mentions), inline=False)
+                embed.add_field(name=f"{EMOJI['user']} Hosted by", value=host, inline=True)
+                embed.set_footer(text=f"Giveaway ended {EMOJI['gift']}")
                 embed.set_thumbnail(url=guild.icon.url if guild.icon else discord.Embed.Empty)
 
                 await message.edit(embed=embed, view=GiveawayButton(int(msg_id), ended=True, giveaway_data=details))
-                await channel.send(f"🎊 Congratulations {', '.join(winner_mentions)}! You won **{details['prize']}**!")
+                await channel.send(f"{EMOJI['confetti']} Congratulations {', '.join(winner_mentions)}! You won **{details['prize']}**!")
 
                 for winner in winners:
                     try:
                         user = await self.bot.fetch_user(int(winner))
-                        await user.send(f"<a:prizes:1489156992512557216> You won **{details['prize']}** in **{guild.name}**!\n[Jump to Giveaway](https://discord.com/channels/{guild.id}/{channel.id}/{msg_id})")
+                        await user.send(f"{EMOJI['party']} You won **{details['prize']}** in **{guild.name}**!\n[Jump to Giveaway](https://discord.com/channels/{guild.id}/{channel.id}/{msg_id})")
                     except:
                         pass
 
@@ -167,6 +170,9 @@ class Giveaway(commands.Cog):
             json.dump(data, f, indent=4)
 
     @commands.hybrid_command(name="gstart", description="Start a giveaway")
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def gstart(self, ctx: commands.Context, duration: str, winners: int, *, prize: str):
         if not ctx.author.guild_permissions.administrator:
             return await ctx.reply("You must be an admin to start giveaways.")
@@ -183,7 +189,7 @@ class Giveaway(commands.Cog):
         seconds = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[unit] * amount
         end_time = datetime.datetime.now(IST) + datetime.timedelta(seconds=seconds)
 
-        embed = discord.Embed(title="<a:prizes:1489156992512557216> GIVEAWAY <a:prizes:1489156992512557216>", description=f"**Prize:** {prize}\n**Hosted by:** <@{ctx.author.id}>", color=discord.Color.green())
+        embed = discord.Embed(title=f"{EMOJI['party']} GIVEAWAY {EMOJI['party']}", description=f"**Prize:** {prize}\n**Hosted by:** <@{ctx.author.id}>", color=discord.Color.green())
         embed.add_field(name="Ends at", value=f"<t:{int(end_time.timestamp())}:F>", inline=False)
         embed.set_thumbnail(url=ctx.guild.icon.url if ctx.guild.icon else discord.Embed.Empty)
 
@@ -210,24 +216,28 @@ class Giveaway(commands.Cog):
         await ctx.reply("Giveaway started!", ephemeral=True if isinstance(ctx, discord.Interaction) else False)
 
     @commands.hybrid_command(name="gend", description="End a giveaway early")
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     async def gend(self, ctx: commands.Context, message_id: str):
         if not ctx.author.guild_permissions.administrator:
-            return await ctx.reply("You must be an admin to end giveaways.")
+            return await ctx.reply(f"{EMOJI['error']} You must be an admin to end giveaways.")
 
         with open(GWY_FILE, "r") as f:
             data = json.load(f)
 
         if message_id not in data:
-            return await ctx.reply("Giveaway not found.")
+            return await ctx.reply(f"{EMOJI['error']} Giveaway not found.")
 
         data[message_id]["end_timestamp"] = datetime.datetime.now(IST).timestamp()
 
         with open(GWY_FILE, "w") as f:
             json.dump(data, f, indent=4)
 
-        await ctx.reply("Giveaway will end shortly.")
+        await ctx.reply(f"{EMOJI['success']} Giveaway will end shortly.")
 
-    @commands.hybrid_command(name="reroll", description="Reroll giveaway winner")
+    @commands.command(name="reroll", description="Reroll giveaway winner")
+    @commands.guild_only()
     async def reroll(self, ctx: commands.Context, message_id: str):
         if not ctx.author.guild_permissions.administrator:
             return await ctx.reply("You must be an admin to reroll giveaways.")
@@ -244,7 +254,7 @@ class Giveaway(commands.Cog):
         mentions = [f"<@{uid}>" for uid in winners] if winners else ["No valid entries"]
 
         embed = discord.Embed(
-            title="<:BlueScroll:1489151045933207643> Giveaway Rerolled!",
+            title=f"{EMOJI['repeat']} Giveaway Rerolled!",
             description=f"**Prize:** {details['prize']}\n**New Winner(s):** {', '.join(mentions)}",
             color=discord.Color.purple()
         )
@@ -255,14 +265,15 @@ class Giveaway(commands.Cog):
         for winner in winners:
             try:
                 user = await self.bot.fetch_user(int(winner))
-                await user.send(f"<:BlueScroll:1489151045933207643> You've been rerolled as a new winner for **{details['prize']}** in **{ctx.guild.name}**!")
+                await user.send(f"{EMOJI['repeat']} You've been rerolled as a new winner for **{details['prize']}** in **{ctx.guild.name}**!")
             except:
                 continue
 
-    @commands.hybrid_command(name="gban", description="Ban a user from giveaways")
+    @commands.command(name="gban", description="Ban a user from giveaways")
+    @commands.guild_only()
     async def gban(self, ctx: commands.Context, user: discord.User):
         if not ctx.author.guild_permissions.administrator:
-            return await ctx.reply("Only admins can ban users from giveaways.")
+            return await ctx.reply(f"{EMOJI['error']} Only admins can ban users from giveaways.")
 
         with open(GWY_FILE, "r") as f:
             data = json.load(f)
@@ -274,9 +285,10 @@ class Giveaway(commands.Cog):
         with open(GWY_FILE, "w") as f:
             json.dump(data, f, indent=4)
 
-        await ctx.reply(f"{user.mention} is now banned from giveaways.")
+        await ctx.reply(f"{EMOJI['boot_kick']} {user.mention} is now banned from giveaways.")
 
-    @commands.hybrid_command(name="gbanlist", description="List banned users")
+    @commands.command(name="gbanlist", description="List banned users")
+    @commands.guild_only()
     async def gbanlist(self, ctx: commands.Context):
         with open(GWY_FILE, "r") as f:
             data = json.load(f)
@@ -286,10 +298,10 @@ class Giveaway(commands.Cog):
             banned_ids.update(entry['banned'])
 
         if not banned_ids:
-            return await ctx.reply("No users banned from giveaways.")
+            return await ctx.reply(f"{EMOJI['info']} No users banned from giveaways.")
 
         mentions = [f"<@{uid}>" for uid in banned_ids]
-        embed = discord.Embed(title="🚫 Giveaway Banned Users", description="\n".join(mentions), color=discord.Color.red())
+        embed = discord.Embed(title=f"{EMOJI['forbidden']} Giveaway Banned Users", description="\n".join(mentions), color=discord.Color.red())
         await ctx.reply(embed=embed)
 
 async def setup(bot):

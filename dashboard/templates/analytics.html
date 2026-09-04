@@ -1,0 +1,45 @@
+{% extends "_shell.html" %}
+{% block title %}Analytics — Control Panel{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow">Usage</p>
+    <h1>Analytics</h1>
+  </div>
+  <span class="pill pill-on">{{ total }} commands run</span>
+</header>
+
+<section class="panel reveal" style="--delay: 40ms">
+  <div class="panel-head"><h2>Top commands</h2></div>
+  {% if not by_command %}
+  <p class="panel-sub">No command usage recorded yet.</p>
+  {% else %}
+  <div class="cog-list">
+    {% for name, count in by_command %}
+    <div class="cog-row reveal-item">
+      <span class="cog-name">{{ name }}</span>
+      <span class="mono">{{ count }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel reveal" style="--delay: 80ms">
+  <div class="panel-head"><h2>Top servers by activity</h2></div>
+  {% if not by_guild %}
+  <p class="panel-sub">No command usage recorded yet.</p>
+  {% else %}
+  <div class="cog-list">
+    {% for g in by_guild %}
+    <div class="cog-row reveal-item">
+      <span class="cog-name">{{ g.name }}</span>
+      <span class="mono">{{ g.count }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+{% endblock %}

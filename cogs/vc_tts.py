@@ -32,6 +32,7 @@ from typing import Optional
 
 import discord
 from discord.ext import commands
+from cogs.utils.emoji_manager import EMOJI
 
 # Optional backends
 try:
@@ -212,21 +213,21 @@ class VCTTS(commands.Cog):
           ,vn uk:Hello (also supported)
         """
         if not args or not args.strip():
-            return await ctx.send("<a:Cross_:1489174755537064046> Please provide text to convert to a voice note. Usage: `,vn <voice?> <text>`")
+            return await ctx.send(f"{EMOJI['error']} Please provide text to convert to a voice note. Usage: `,vn <voice?> <text>`")
 
         voice_key, text = self._parse_voice_and_text(args)
         if not text:
-            return await ctx.send("<a:Cross_:1489174755537064046> No text provided after voice selection. Usage: `,vn <voice?> <text>`")
+            return await ctx.send(f"{EMOJI['error']} No text provided after voice selection. Usage: `,vn <voice?> <text>`")
 
         if len(text) > MAX_TTS_CHARS:
-            return await ctx.send(f"<a:Cross_:1489174755537064046> Text too long. Limit: {MAX_TTS_CHARS} characters.")
+            return await ctx.send(f"{EMOJI['error']} Text too long. Limit: {MAX_TTS_CHARS} characters.")
 
-        status = await ctx.send("🔊 Generating voice note...")
+        status = await ctx.send(f"{EMOJI['speaker']} Generating voice note...")
 
         try:
             mp3_path = await self.generate_tts_file(text, voice=voice_key)
         except Exception as e:
-            await status.edit(content=f"<a:Cross_:1489174755537064046> TTS generation failed: {e}")
+            await status.edit(content=f"{EMOJI['error']} TTS generation failed: {e}")
             return
 
         try:
@@ -234,7 +235,7 @@ class VCTTS(commands.Cog):
             await ctx.send(file=discord.File(mp3_path, filename=filename))
             await status.delete()
         except Exception as e:
-            await status.edit(content=f"<a:Cross_:1489174755537064046> Failed to send file: {e}")
+            await status.edit(content=f"{EMOJI['error']} Failed to send file: {e}")
         finally:
             try:
                 if os.path.exists(mp3_path):
@@ -251,26 +252,26 @@ class VCTTS(commands.Cog):
           ,vc_say female Hello
         """
         if not args or not args.strip():
-            return await ctx.send("<a:Cross_:1489174755537064046> Please provide text to speak. Usage: `,vc_say <voice?> <text>`")
+            return await ctx.send(f"{EMOJI['error']} Please provide text to speak. Usage: `,vc_say <voice?> <text>`")
 
         voice_key, text = self._parse_voice_and_text(args)
         if not text:
-            return await ctx.send("<a:Cross_:1489174755537064046> No text provided after voice selection. Usage: `,vc_say <voice?> <text>`")
+            return await ctx.send(f"{EMOJI['error']} No text provided after voice selection. Usage: `,vc_say <voice?> <text>`")
 
         if len(text) > MAX_TTS_CHARS:
-            return await ctx.send(f"<a:Cross_:1489174755537064046> Text too long. Limit: {MAX_TTS_CHARS} characters.")
+            return await ctx.send(f"{EMOJI['error']} Text too long. Limit: {MAX_TTS_CHARS} characters.")
 
         author = ctx.author
         if not getattr(author, "voice", None) or not author.voice.channel:
-            return await ctx.send("<a:Cross_:1489174755537064046> You must be connected to a voice channel for me to speak there.")
+            return await ctx.send(f"{EMOJI['error']} You must be connected to a voice channel for me to speak there.")
 
         channel = author.voice.channel
-        status = await ctx.send(f"🔊 Joining `{channel.name}` and speaking...")
+        status = await ctx.send(f"{EMOJI['speaker']} Joining `{channel.name}` and speaking...")
 
         try:
             mp3_path = await self.generate_tts_file(text, voice=voice_key)
         except Exception as e:
-            await status.edit(content=f"<a:Cross_:1489174755537064046> TTS generation failed: {e}")
+            await status.edit(content=f"{EMOJI['error']} TTS generation failed: {e}")
             return
 
         vc: Optional[discord.VoiceClient] = discord.utils.get(self.bot.voice_clients, guild=ctx.guild)
@@ -283,7 +284,7 @@ class VCTTS(commands.Cog):
             else:
                 vc = await channel.connect(timeout=10.0, reconnect=True)
         except Exception as e:
-            await status.edit(content=f"<a:Cross_:1489174755537064046> Could not connect to voice channel: {e}")
+            await status.edit(content=f"{EMOJI['error']} Could not connect to voice channel: {e}")
             try:
                 if os.path.exists(mp3_path):
                     os.remove(mp3_path)
@@ -304,9 +305,9 @@ class VCTTS(commands.Cog):
                 waited += 0.5
                 if waited >= timeout:
                     break
-            await status.edit(content="<a:tick:1489157731393994854> Finished speaking.")
+            await status.edit(content=f"{EMOJI['success']} Finished speaking.")
         except Exception as e:
-            await status.edit(content=f"<a:Cross_:1489174755537064046> Playback error: {e}")
+            await status.edit(content=f"{EMOJI['error']} Playback error: {e}")
         finally:
             try:
                 if os.path.exists(mp3_path):
@@ -333,35 +334,35 @@ class VCTTS(commands.Cog):
           - The text may optionally start with voice key (see ,vn).
         """
         if not user:
-            return await ctx.send("<a:Cross_:1489174755537064046> Please specify a user to DM the voice note to.")
+            return await ctx.send(f"{EMOJI['error']} Please specify a user to DM the voice note to.")
 
         if not args or not args.strip():
-            return await ctx.send("<a:Cross_:1489174755537064046> Please provide text to convert to a voice note. Usage: `,dm_vn <user> <voice?> <text>`")
+            return await ctx.send(f"{EMOJI['error']} Please provide text to convert to a voice note. Usage: `,dm_vn <user> <voice?> <text>`")
 
         voice_key, text = self._parse_voice_and_text(args)
         if not text:
-            return await ctx.send("<a:Cross_:1489174755537064046> No text provided after voice selection. Usage: `,dm_vn <user> <voice?> <text>`")
+            return await ctx.send(f"{EMOJI['error']} No text provided after voice selection. Usage: `,dm_vn <user> <voice?> <text>`")
 
         if len(text) > MAX_TTS_CHARS:
-            return await ctx.send(f"<a:Cross_:1489174755537064046> Text too long. Limit: {MAX_TTS_CHARS} characters.")
+            return await ctx.send(f"{EMOJI['error']} Text too long. Limit: {MAX_TTS_CHARS} characters.")
 
-        status = await ctx.send(f"🔊 Generating voice note to DM {user}...")
+        status = await ctx.send(f"{EMOJI['speaker']} Generating voice note to DM {user}...")
 
         try:
             mp3_path = await self.generate_tts_file(text, voice=voice_key)
         except Exception as e:
-            await status.edit(content=f"<a:Cross_:1489174755537064046> TTS generation failed: {e}")
+            await status.edit(content=f"{EMOJI['error']} TTS generation failed: {e}")
             return
 
         try:
             filename = f"{_clean_filename(text)[:24]}_{voice_key}.mp3"
             try:
                 await user.send(file=discord.File(mp3_path, filename=filename))
-                await status.edit(content=f"<a:tick:1489157731393994854> Sent voice note to {user}.")
+                await status.edit(content=f"{EMOJI['success']} Sent voice note to {user}.")
             except discord.Forbidden:
-                await status.edit(content=f"<a:Cross_:1489174755537064046> Could not DM {user}. They may have DMs disabled or blocked the bot.")
+                await status.edit(content=f"{EMOJI['error']} Could not DM {user}. They may have DMs disabled or blocked the bot.")
             except Exception as e:
-                await status.edit(content=f"<a:Cross_:1489174755537064046> Failed to send DM: {e}")
+                await status.edit(content=f"{EMOJI['error']} Failed to send DM: {e}")
         finally:
             try:
                 if os.path.exists(mp3_path):

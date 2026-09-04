@@ -1,0 +1,98 @@
+{% extends "_shell.html" %}
+{% block title %}Overview — Control Panel{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow">Overview</p>
+    <h1>{{ bot_name }}</h1>
+  </div>
+  {% if avatar_url %}<img class="bot-avatar glow-ring" src="{{ avatar_url }}" alt="">{% endif %}
+</header>
+
+<div class="btn-row reveal" style="--delay: 20ms; margin-bottom: 20px;">
+  <a href="{{ url_for('backup_export') }}" class="btn btn-ghost">⬇ Download data backup</a>
+  <form method="post" action="{{ url_for('sync_commands') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-ghost">↻ Sync slash commands</button>
+  </form>
+</div>
+
+<section class="stat-grid">
+  <div class="stat-card reveal glow-card" style="--delay: 0ms">
+    <span class="stat-label">Status</span>
+    <span class="stat-value mono">
+      <span class="dot pulse-dot {{ 'dot-on' if bot_online else 'dot-off' }}" data-live="status_dot"></span>
+      <span data-live="status_text">{{ 'Online' if bot_online else 'Offline' }}</span>
+    </span>
+  </div>
+  <div class="stat-card reveal" style="--delay: 60ms">
+    <span class="stat-label">Servers</span>
+    <span class="stat-value mono" data-live="guild_count" data-value="{{ guild_count }}">{{ guild_count }}</span>
+  </div>
+  <div class="stat-card reveal" style="--delay: 120ms">
+    <span class="stat-label">Members reached</span>
+    <span class="stat-value mono" data-live="user_count" data-value="{{ user_count }}">{{ user_count }}</span>
+  </div>
+  <div class="stat-card reveal" style="--delay: 180ms">
+    <span class="stat-label">Latency</span>
+    <span class="stat-value mono" data-live="latency_ms">{{ latency_ms ~ 'ms' if latency_ms is not none else '—' }}</span>
+  </div>
+</section>
+
+<section class="stat-grid stat-grid-detail">
+  <div class="stat-card stat-card-sm reveal" style="--delay: 220ms">
+    <span class="stat-label">Uptime</span>
+    <span class="stat-value-sm mono" data-live="uptime">—</span>
+  </div>
+  <div class="stat-card stat-card-sm reveal" style="--delay: 250ms">
+    <span class="stat-label">CPU</span>
+    <span class="stat-value-sm mono" data-live="cpu_percent">—</span>
+  </div>
+  <div class="stat-card stat-card-sm reveal" style="--delay: 280ms">
+    <span class="stat-label">Memory</span>
+    <span class="stat-value-sm mono" data-live="memory_mb">—</span>
+  </div>
+  <div class="stat-card stat-card-sm reveal" style="--delay: 310ms">
+    <span class="stat-label">Commands</span>
+    <span class="stat-value-sm mono" data-live="command_count">—</span>
+  </div>
+  <div class="stat-card stat-card-sm reveal" style="--delay: 340ms">
+    <span class="stat-label">Cogs loaded</span>
+    <span class="stat-value-sm mono" data-live="cog_loaded_count">—</span>
+  </div>
+  <div class="stat-card stat-card-sm reveal" style="--delay: 370ms">
+    <span class="stat-label">Shards</span>
+    <span class="stat-value-sm mono" data-live="shard_count">—</span>
+  </div>
+</section>
+
+<section id="cogs" class="panel reveal" style="--delay: 400ms">
+  <div class="panel-head">
+    <h2>Cogs</h2>
+    <form method="post" action="{{ url_for('reload_all') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-ghost" type="submit">Reload all now</button>
+    </form>
+  </div>
+  <p class="panel-sub">Toggling a cog takes effect after the next reload/restart. Disabled cogs are skipped entirely at startup. Loaded state updates live.</p>
+
+  <div class="cog-list">
+    {% for c in cogs_info %}
+    <div class="cog-row reveal-item" data-cog-row="{{ c.name }}" style="animation-delay: {{ loop.index0 * 25 }}ms">
+      <div class="cog-info">
+        <span class="cog-name">{{ c.name }}</span>
+        <span class="pill {{ 'pill-on' if c.loaded else 'pill-off' }}">{{ 'loaded' if c.loaded else 'not loaded' }}</span>
+      </div>
+      <form method="post" action="{{ url_for('toggle_cog', cog_name=c.name) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="switch {{ 'switch-on' if c.enabled else '' }}" aria-label="Toggle {{ c.name }}">
+          <span class="switch-knob"></span>
+        </button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+{% endblock %}

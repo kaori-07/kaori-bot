@@ -1,0 +1,105 @@
+{% extends "_shell.html" %}
+{% block title %}Emojis — Control Panel{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow">emoji.json</p>
+    <h1>Emojis</h1>
+  </div>
+</header>
+
+<p class="panel-sub">Every emoji used across every command lives here. Edits apply live — no restart needed. Each entry shows whether it's still the shipped default or has been customized (e.g. swapped for your own Nitro/animated emoji) — customized ones can be reset back in one click.</p>
+
+<section class="panel reveal" style="--delay: 60ms">
+  <div class="panel-head"><h2>Add / update</h2></div>
+  <form method="post" action="{{ url_for('save_emoji') }}" class="inline-form" id="emoji-add-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Slug
+      <input type="text" name="slug" placeholder="success" list="slug-list" required>
+    </label>
+    <label>Value
+      <input type="text" name="value" id="emoji-value-input" placeholder="✅ or <a:tick:123456789012345678>" required>
+    </label>
+    <div class="emoji-live-preview" id="emoji-live-preview">—</div>
+    <button type="submit" class="btn btn-primary">Save</button>
+  </form>
+  <datalist id="slug-list">
+    {% for slug, value in emojis %}<option value="{{ slug }}">{% endfor %}
+  </datalist>
+</section>
+
+<section class="panel reveal" style="--delay: 120ms">
+  <div class="panel-head">
+    <h2>All emojis ({{ emojis|length }})</h2>
+    <input type="text" id="emoji-search" class="search-input" placeholder="Search slug or value…">
+  </div>
+  <div class="emoji-grid" id="emoji-grid">
+    {% for slug, value in emojis %}
+    {% set default_val = defaults.get(slug) %}
+    {% set is_custom = default_val is not none and default_val != value %}
+    <div class="emoji-card reveal-item" data-search="{{ slug|lower }} {{ value|lower }}">
+      <span class="emoji-preview">{{ value|render_emoji }}</span>
+      <div class="emoji-meta">
+        <span class="emoji-slug mono">{{ slug }}</span>
+        <span class="emoji-value mono">{{ value }}</span>
+        {% if default_val is not none %}
+          {% if is_custom %}
+          <span class="pill pill-off" title="Default: {{ default_val }}">customized</span>
+          {% else %}
+          <span class="pill pill-on">default</span>
+          {% endif %}
+        {% else %}
+        <span class="pill pill-off">no default (added via dashboard)</span>
+        {% endif %}
+      </div>
+      <div class="emoji-card-actions">
+        {% if is_custom %}
+        <form method="post" action="{{ url_for('reset_emoji', slug=slug) }}" title="Reset to default: {{ default_val }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost btn-sm">Reset to default</button>
+        </form>
+        {% endif %}
+        <form method="post" action="{{ url_for('delete_emoji', slug=slug) }}" onsubmit="return confirm('Delete {{ slug }}?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-danger-ghost btn-sm">Delete</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="panel-sub" id="emoji-empty" style="display:none">No emojis match your search.</p>
+</section>
+
+<script>
+  const searchInput = document.getElementById('emoji-search');
+  const cards = Array.from(document.querySelectorAll('#emoji-grid .emoji-card'));
+  const emptyMsg = document.getElementById('emoji-empty');
+  searchInput.addEventListener('input', () => {
+    const q = searchInput.value.trim().toLowerCase();
+    let visible = 0;
+    cards.forEach(c => {
+      const match = !q || c.dataset.search.includes(q);
+      c.style.display = match ? '' : 'none';
+      if (match) visible++;
+    });
+    emptyMsg.style.display = visible === 0 ? 'block' : 'none';
+  });
+
+  const valueInput = document.getElementById('emoji-value-input');
+  const preview = document.getElementById('emoji-live-preview');
+  const customTagRe = /^<(a?):([A-Za-z0-9_]+):(\d+)>$/;
+  valueInput.addEventListener('input', () => {
+    const v = valueInput.value.trim();
+    if (!v) { preview.textContent = '—'; return; }
+    const m = v.match(customTagRe);
+    if (m) {
+      const ext = m[1] === 'a' ? 'gif' : 'png';
+      preview.innerHTML = `<img class="emoji-cdn-icon" src="https://cdn.discordapp.com/emojis/${m[3]}.${ext}" alt="${m[2]}">`;
+    } else {
+      preview.textContent = v;
+    }
+  });
+</script>
+
+{% endblock %}

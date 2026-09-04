@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import json
+from cogs.utils.emoji_manager import EMOJI
 
 # ==========================================
 # UI MODALS FOR EMBED BUILDER
@@ -147,18 +149,18 @@ class EmbedBuilderView(discord.ui.View):
         
         # Fallback if the channel somehow can't be resolved
         if not channel:
-            return await interaction.response.send_message("<a:Cross_:1489174755537064046> Error: Could not fully resolve the selected channel.", ephemeral=True)
+            return await interaction.response.send_message(f"{EMOJI['error']} Error: Could not fully resolve the selected channel.", ephemeral=True)
 
         # 2. Check permissions on the newly resolved channel object
         if not channel.permissions_for(interaction.guild.me).send_messages:
-            return await interaction.response.send_message(f"<a:Cross_:1489174755537064046> I don't have permission to send messages in {channel.mention}.", ephemeral=True)
+            return await interaction.response.send_message(f"{EMOJI['error']} I don't have permission to send messages in {channel.mention}.", ephemeral=True)
         
         # 3. Attempt to send the embed
         try:
             await channel.send(embed=self.embed_draft)
-            await interaction.response.send_message(f"<a:tick:1489157731393994854> Embed successfully sent to {channel.mention}!", ephemeral=True)
+            await interaction.response.send_message(f"{EMOJI['success']} Embed successfully sent to {channel.mention}!", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"<a:Cross_:1489174755537064046> Failed to send: {e}", ephemeral=True)
+            await interaction.response.send_message(f"{EMOJI['error']} Failed to send: {e}", ephemeral=True)
 
 # ==========================================
 # MAIN COG CLASS
@@ -168,13 +170,17 @@ class EmbedManager(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.hybrid_command(name="embed_builder", description="Open the interactive GUI to build an embed.")
+    @commands.command(name="embed_builder", description="Open the interactive GUI to build an embed.")
+    @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     async def embed_builder(self, ctx: commands.Context):
         view = EmbedBuilderView(ctx)
         view.message = await ctx.send("### 🛠️ Interactive Embed Builder", embed=view.embed_draft, view=view)
 
     @commands.hybrid_command(name="embed_quick", description="Quickly send a simple embed to a channel.")
+    @commands.guild_only()
+    @app_commands.allowed_installs(guilds=True, users=False)
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
     @commands.has_permissions(manage_messages=True)
     async def embed_quick(self, ctx: commands.Context, channel: discord.TextChannel, title: str, description: str, hex_color: str = "#2f3136"):
         try:
@@ -187,11 +193,12 @@ class EmbedManager(commands.Cog):
         
         try:
             await channel.send(embed=embed)
-            await ctx.send(f"<a:tick:1489157731393994854> Quick embed sent to {channel.mention}.", ephemeral=True)
+            await ctx.send(f"{EMOJI['success']} Quick embed sent to {channel.mention}.", ephemeral=True)
         except discord.Forbidden:
-            await ctx.send(f"<a:Cross_:1489174755537064046> I don't have permissions to send messages in {channel.mention}.", ephemeral=True)
+            await ctx.send(f"{EMOJI['error']} I don't have permissions to send messages in {channel.mention}.", ephemeral=True)
 
-    @commands.hybrid_command(name="embed_json", description="Send an advanced embed using JSON format.")
+    @commands.command(name="embed_json", description="Send an advanced embed using JSON format.")
+    @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     async def embed_json(self, ctx: commands.Context, channel: discord.TextChannel, *, json_data: str):
         # Strip codeblocks if user provided them
@@ -202,13 +209,14 @@ class EmbedManager(commands.Cog):
             data = json.loads(json_data)
             embed = discord.Embed.from_dict(data)
             await channel.send(embed=embed)
-            await ctx.send(f"<a:tick:1489157731393994854> JSON Embed successfully sent to {channel.mention}.", ephemeral=True)
+            await ctx.send(f"{EMOJI['success']} JSON Embed successfully sent to {channel.mention}.", ephemeral=True)
         except json.JSONDecodeError as e:
-            await ctx.send(f"<a:Cross_:1489174755537064046> Invalid JSON format:\n```py\n{e}\n```", ephemeral=True)
+            await ctx.send(f"{EMOJI['error']} Invalid JSON format:\n```py\n{e}\n```", ephemeral=True)
         except Exception as e:
-            await ctx.send(f"<a:Cross_:1489174755537064046> An error occurred:\n```py\n{e}\n```", ephemeral=True)
+            await ctx.send(f"{EMOJI['error']} An error occurred:\n```py\n{e}\n```", ephemeral=True)
 
-    @commands.hybrid_command(name="embed_edit", description="Edit an existing embed sent by the bot using a message link and JSON.")
+    @commands.command(name="embed_edit", description="Edit an existing embed sent by the bot using a message link and JSON.")
+    @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     async def embed_edit(self, ctx: commands.Context, message_link: str, *, json_data: str):
         try:
@@ -219,11 +227,14 @@ class EmbedManager(commands.Cog):
             
             channel = self.bot.get_channel(channel_id)
             if not channel:
-                return await ctx.send("<a:Cross_:1489174755537064046> Could not find the channel from that link.", ephemeral=True)
-                
+                return await ctx.send(f"{EMOJI['error']} Could not find the channel from that link.", ephemeral=True)
+
+            if getattr(channel, "guild", None) is None or channel.guild.id != ctx.guild.id:
+                return await ctx.send(f"{EMOJI['error']} That message isn't in this server.", ephemeral=True)
+
             msg = await channel.fetch_message(message_id)
             if msg.author != self.bot.user:
-                return await ctx.send("<a:Cross_:1489174755537064046> I can only edit messages that were sent by me.", ephemeral=True)
+                return await ctx.send(f"{EMOJI['error']} I can only edit messages that were sent by me.", ephemeral=True)
 
             # Clean JSON
             if json_data.startswith("```"):
@@ -233,16 +244,16 @@ class EmbedManager(commands.Cog):
             embed = discord.Embed.from_dict(data)
             
             await msg.edit(embed=embed)
-            await ctx.send(f"<a:tick:1489157731393994854> Embed edited successfully! [Jump to Message]({message_link})", ephemeral=True)
+            await ctx.send(f"{EMOJI['success']} Embed edited successfully! [Jump to Message]({message_link})", ephemeral=True)
             
         except ValueError:
-            await ctx.send("<a:Cross_:1489174755537064046> Invalid message link provided.", ephemeral=True)
+            await ctx.send(f"{EMOJI['error']} Invalid message link provided.", ephemeral=True)
         except discord.NotFound:
-            await ctx.send("<a:Cross_:1489174755537064046> Message not found.", ephemeral=True)
+            await ctx.send(f"{EMOJI['error']} Message not found.", ephemeral=True)
         except json.JSONDecodeError as e:
-            await ctx.send(f"<a:Cross_:1489174755537064046> Invalid JSON format:\n```py\n{e}\n```", ephemeral=True)
+            await ctx.send(f"{EMOJI['error']} Invalid JSON format:\n```py\n{e}\n```", ephemeral=True)
         except Exception as e:
-            await ctx.send(f"<a:Cross_:1489174755537064046> An error occurred:\n```py\n{e}\n```", ephemeral=True)
+            await ctx.send(f"{EMOJI['error']} An error occurred:\n```py\n{e}\n```", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(EmbedManager(bot))

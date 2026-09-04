@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="dot pulse-dot {{ 'dot-on' if bot_online else 'dot-off' }}" id="nav-dot"></span>
+      <span class="mark-text">CONTROL PANEL</span>
+    </div>
+    <nav class="nav">
+      <a href="{{ url_for('index') }}" class="nav-link {{ 'active' if active=='overview' else '' }}">
+        <span class="nav-ico">◆</span> Overview
+      </a>
+      <a href="{{ url_for('guilds') }}" class="nav-link {{ 'active' if active=='guilds' else '' }}">
+        <span class="nav-ico">◇</span> Servers
+      </a>
+      <a href="{{ url_for('emojis') }}" class="nav-link {{ 'active' if active=='emojis' else '' }}">
+        <span class="nav-ico">✧</span> Emojis
+      </a>
+      <a href="{{ url_for('presence') }}" class="nav-link {{ 'active' if active=='presence' else '' }}">
+        <span class="nav-ico">◈</span> Rich Presence
+      </a>
+      <a href="{{ url_for('music') }}" class="nav-link {{ 'active' if active=='music' else '' }}">
+        <span class="nav-ico">♪</span> Music
+      </a>
+      <a href="{{ url_for('antinuke') }}" class="nav-link {{ 'active' if active=='antinuke' else '' }}">
+        <span class="nav-ico">⛨</span> Anti-Nuke
+      </a>
+      <a href="{{ url_for('serverlogs') }}" class="nav-link {{ 'active' if active=='serverlogs' else '' }}">
+        <span class="nav-ico">▤</span> Server Logs
+      </a>
+      <a href="{{ url_for('analytics') }}" class="nav-link {{ 'active' if active=='analytics' else '' }}">
+        <span class="nav-ico">◔</span> Analytics
+      </a>
+      <a href="{{ url_for('broadcast') }}" class="nav-link {{ 'active' if active=='broadcast' else '' }}">
+        <span class="nav-ico">▲</span> Broadcast
+      </a>
+      <a href="{{ url_for('logs') }}" class="nav-link {{ 'active' if active=='logs' else '' }}">
+        <span class="nav-ico">▤</span> Live Logs
+      </a>
+    </nav>
+    <div class="sidebar-foot">
+      <span class="mono muted small" id="nav-latency">— ms</span>
+      <a href="{{ url_for('logout') }}" class="nav-logout">Sign out</a>
+    </div>
+  </aside>
+  <main class="main">
+    <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-stack" data-flash-source>
+          {% for category, message in messages %}
+            <div class="flash flash-{{ category }}" data-flash>{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block inner %}{% endblock %}
+  </main>
+</div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "_shell.html" %}
+{% block title %}{{ guild_name }} — Whitelist{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow"><a href="{{ url_for('antinuke') }}" style="color: var(--muted); text-decoration:none;">&larr; Anti-Nuke</a></p>
+    <h1>{{ guild_name }}</h1>
+  </div>
+</header>
+
+<section class="panel reveal" style="--delay: 40ms">
+  <div class="panel-head"><h2>Whitelisted users ({{ whitelist|length }})</h2></div>
+  <p class="panel-sub">These users bypass all anti-nuke checks entirely.</p>
+  <div class="cog-list">
+    {% for u in whitelist %}
+    <div class="whitelist-row">
+      <span class="mono">{{ u.name }}</span>
+      <form method="post" action="{{ url_for('antinuke_whitelist_remove', guild_id=guild_id, user_id=u.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger-ghost btn-sm">Remove</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="panel-sub">No one is whitelisted.</p>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel reveal" style="--delay: 80ms">
+  <div class="panel-head"><h2>Trusted admins ({{ extra_owners|length }})</h2></div>
+  <p class="panel-sub">Highest trust tier — bypasses everything, including anti-nuke, set via <code>/trust_admin</code>.</p>
+  <div class="cog-list">
+    {% for u in extra_owners %}
+    <div class="whitelist-row">
+      <span class="mono">{{ u.name }}</span>
+      <form method="post" action="{{ url_for('antinuke_owner_remove', guild_id=guild_id, user_id=u.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger-ghost btn-sm">Remove</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="panel-sub">No trusted admins set.</p>
+    {% endfor %}
+  </div>
+</section>
+
+{% endblock %}

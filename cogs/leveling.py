@@ -1,40 +1,38 @@
 import discord
 from discord.ext import commands
-import json
+from discord import app_commands
 import random
 from datetime import datetime, timedelta
 import humanize
+from cogs.utils.emoji_manager import EMOJI
+from cogs.utils.json_store import get_store
 
-leveling_data = {}
+LEVELING_FILE = "leveling.json"
+
 
 class Leveling(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.load_data()
-        self.cooldowns = {}
+        self.store = get_store(LEVELING_FILE, dict)
 
-    def load_data(self):
-        try:
-            with open("leveling.json", "r") as f:
-                global leveling_data
-                leveling_data = json.load(f)
-        except FileNotFoundError:
-            leveling_data = {}
+    @property
+    def data(self) -> dict:
+        return self.store.read()
 
     def save_data(self):
-        with open("leveling.json", "w") as f:
-            json.dump(leveling_data, f, indent=4)
+        self.store.save(self.data)
 
     def get_user_level(self, user_id):
-        user = leveling_data.get(str(user_id), {"level": 1, "xp": 0})
+        user = self.data.get(str(user_id), {"level": 1, "xp": 0})
         return user["level"], user["xp"]
 
     def update_user_xp(self, user_id, xp_to_add):
         user_id = str(user_id)
-        if user_id not in leveling_data:
-            leveling_data[user_id] = {"level": 1, "xp": 0}
+        data = self.data
+        if user_id not in data:
+            data[user_id] = {"level": 1, "xp": 0}
 
-        user_data = leveling_data[user_id]
+        user_data = data[user_id]
         user_data["xp"] += xp_to_add
         level, xp = user_data["level"], user_data["xp"]
 
@@ -52,143 +50,159 @@ class Leveling(commands.Cog):
         return level * 100
 
     @commands.Cog.listener()
-    async def on_message(self, message):
-        if message.author.bot:
+    async def on_message(self, message: discord.Message):
+        if message.author.bot or message.guild is None:
             return
 
         xp_earned = random.randint(5, 15)
         leveled_up = self.update_user_xp(message.author.id, xp_earned)
         if leveled_up:
-            level = leveling_data[str(message.author.id)]["level"]
+            level = self.data[str(message.author.id)]["level"]
             embed = discord.Embed(
-                title="<a:prizes:1489156992512557216> Level Up!",
+                title=f"{EMOJI['party']} Level Up!",
                 description=f"Congrats {message.author.mention}, you reached level **{level}**!",
                 color=discord.Color.purple()
             )
-            await message.channel.send(embed=embed)
+            try:
+                await message.channel.send(embed=embed)
+            except discord.HTTPException:
+                pass
 
-    @commands.command(description="Check your level or another user's level.")
-    async def level(self, ctx, member: discord.Member = None):
-        member = member or ctx.author
-        level, xp = self.get_user_level(member.id)
+    @commands.hybrid_command(name="level", description="Check your level or another user's level.")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    async def level(self, ctx, user: discord.User = None):
+        user = user or ctx.author
+        level, xp = self.get_user_level(user.id)
         next_level_xp = self.get_next_level_xp(level)
         embed = discord.Embed(
-            title=f"🏆 {member.name}'s Level",
-            description=f"{member.name} is level **{level}** with **{xp} XP**.\n"
+            title=f"{EMOJI['trophy']} {user.name}'s Level",
+            description=f"{user.name} is level **{level}** with **{xp} XP**.\n"
                         f"XP to next level: **{next_level_xp - xp}**.",
             color=discord.Color.blue()
         )
-        embed.set_thumbnail(url=member.avatar.url)
+        embed.set_thumbnail(url=user.display_avatar.url)
         await ctx.send(embed=embed)
 
-    @commands.command(description="Check the XP of you or another user.")
-    async def xp(self, ctx, member: discord.Member = None):
-        member = member or ctx.author
-        _, xp = self.get_user_level(member.id)
+    @commands.command(name="xp", description="Check the XP of you or another user.")
+    async def xp(self, ctx, user: discord.User = None):
+        user = user or ctx.author
+        _, xp = self.get_user_level(user.id)
         embed = discord.Embed(
-            title=f"💎 {member.name}'s XP",
-            description=f"{member.name} has **{xp} XP**.",
+            title=f"{EMOJI['gem']} {user.name}'s XP",
+            description=f"{user.name} has **{xp} XP**.",
             color=discord.Color.green()
         )
+        embed.set_thumbnail(url=user.display_avatar.url)
         await ctx.send(embed=embed)
 
-    @commands.command(description="View the top 5 users by level.")
+    @commands.hybrid_command(name="leaderboard", description="View the top 10 users by level.")
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def leaderboard(self, ctx):
-        sorted_users = sorted(leveling_data.items(), key=lambda x: (x[1]["level"], x[1]["xp"]), reverse=True)[:5]
+        sorted_users = sorted(self.data.items(), key=lambda x: (x[1]["level"], x[1]["xp"]), reverse=True)[:10]
+        if not sorted_users:
+            return await ctx.send(f"{EMOJI['info']} No one has earned XP yet.")
+
         embed = discord.Embed(
-            title="🏆 Level Leaderboard",
-            description="Here are the top 5 users by level:",
+            title=f"{EMOJI['trophy']} Level Leaderboard",
+            description="Here are the top users by level:",
             color=discord.Color.gold()
         )
-        for i, (user_id, data) in enumerate(sorted_users, 1):
-            user = self.bot.get_user(int(user_id)) or await self.bot.fetch_user(int(user_id))
-            embed.add_field(name=f"{i}. {user}", value=f"Level {data['level']} - {data['xp']} XP", inline=False)
+        for i, (user_id, udata) in enumerate(sorted_users, 1):
+            try:
+                user = self.bot.get_user(int(user_id)) or await self.bot.fetch_user(int(user_id))
+                name = str(user)
+            except (discord.NotFound, discord.HTTPException):
+                name = f"Unknown User ({user_id})"
+            embed.add_field(name=f"{i}. {name}", value=f"Level {udata['level']} - {udata['xp']} XP", inline=False)
 
         await ctx.send(embed=embed)
 
-    @commands.command(description="Admin-only: Add XP to a user.")
+    @commands.command(name="addxp", description="Admin-only: Add XP to a user.")
+    @commands.guild_only()
     @commands.has_permissions(administrator=True)
     async def addxp(self, ctx, member: discord.Member, xp: int):
         self.update_user_xp(member.id, xp)
         embed = discord.Embed(
-            title="<a:tick:1489157731393994854> XP Added",
+            title=f"{EMOJI['success']} XP Added",
             description=f"{xp} XP added to {member.name}.",
             color=discord.Color.green()
         )
         await ctx.send(embed=embed)
 
-    @commands.command(description="Work every 1 hour to earn XP.")
+    @commands.command(name="work", description="Work every 1 hour to earn XP.")
     async def work(self, ctx):
         now = datetime.utcnow()
-        last_work = leveling_data.get(str(ctx.author.id), {}).get("last_work", None)
+        last_work = self.data.get(str(ctx.author.id), {}).get("last_work", None)
         if last_work and now - datetime.strptime(last_work, "%Y-%m-%d %H:%M:%S") < timedelta(hours=1):
             remaining = datetime.strptime(last_work, "%Y-%m-%d %H:%M:%S") + timedelta(hours=1) - now
             embed = discord.Embed(
-                title="⏳ Cooldown",
+                title=f"{EMOJI['loading']} Cooldown",
                 description=f"You can work again in **{humanize.naturaldelta(remaining)}**.",
                 color=discord.Color.red()
             )
-            await ctx.send(embed=embed)
-            return
+            return await ctx.send(embed=embed)
 
         xp_earned = random.randint(10, 50)
         leveled_up = self.update_user_xp(ctx.author.id, xp_earned)
-        leveling_data[str(ctx.author.id)]["last_work"] = now.strftime("%Y-%m-%d %H:%M:%S")
+        data = self.data
+        data[str(ctx.author.id)]["last_work"] = now.strftime("%Y-%m-%d %H:%M:%S")
         self.save_data()
 
         embed = discord.Embed(
-            title="💼 Work Complete",
+            title=f"{EMOJI['briefcase']} Work Complete",
             description=f"You earned **{xp_earned} XP** for working!",
             color=discord.Color.blue()
         )
         await ctx.send(embed=embed)
 
         if leveled_up:
-            level = leveling_data[str(ctx.author.id)]["level"]
+            level = self.data[str(ctx.author.id)]["level"]
             level_up_embed = discord.Embed(
-                title="<a:prizes:1489156992512557216> Level Up!",
+                title=f"{EMOJI['party']} Level Up!",
                 description=f"Great job {ctx.author.mention}, you're now level **{level}**!",
                 color=discord.Color.purple()
             )
             await ctx.send(embed=level_up_embed)
 
-    @commands.command(description="Claim a daily XP reward.")
+    @commands.command(name="daily", description="Claim a daily XP reward.")
     async def daily(self, ctx):
         now = datetime.utcnow()
-        last_claim = leveling_data.get(str(ctx.author.id), {}).get("last_daily", None)
+        last_claim = self.data.get(str(ctx.author.id), {}).get("last_daily", None)
 
         if last_claim and now - datetime.strptime(last_claim, "%Y-%m-%d %H:%M:%S") < timedelta(days=1):
             next_time = datetime.strptime(last_claim, "%Y-%m-%d %H:%M:%S") + timedelta(days=1)
             remaining = next_time - now
             embed = discord.Embed(
-                title="<a:Cross_:1489174755537064046> Already Claimed",
+                title=f"{EMOJI['error']} Already Claimed",
                 description=f"Come back in **{humanize.naturaldelta(remaining)}** to claim again.",
                 color=discord.Color.red()
             )
-            await ctx.send(embed=embed)
-            return
+            return await ctx.send(embed=embed)
 
         reward_xp = random.randint(50, 200)
         leveled_up = self.update_user_xp(ctx.author.id, reward_xp)
-        leveling_data[str(ctx.author.id)]["last_daily"] = now.strftime("%Y-%m-%d %H:%M:%S")
+        data = self.data
+        data[str(ctx.author.id)]["last_daily"] = now.strftime("%Y-%m-%d %H:%M:%S")
         self.save_data()
 
         embed = discord.Embed(
-            title="<a:gift_:1489165623165583371> Daily Reward",
+            title=f"{EMOJI['gift']} Daily Reward",
             description=f"You earned **{reward_xp} XP** today!",
             color=discord.Color.blue()
         )
         await ctx.send(embed=embed)
 
         if leveled_up:
-            level = leveling_data[str(ctx.author.id)]["level"]
+            level = self.data[str(ctx.author.id)]["level"]
             level_up_embed = discord.Embed(
-                title="<a:minecraft_block:1489165065566421104> Level Up!",
+                title=f"{EMOJI['party']} Level Up!",
                 description=f"You reached level **{level}**!",
                 color=discord.Color.purple()
             )
             await ctx.send(embed=level_up_embed)
 
-# Setup function to add the cog to the bot
+
 async def setup(bot):
     await bot.add_cog(Leveling(bot))

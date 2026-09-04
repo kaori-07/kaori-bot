@@ -1,0 +1,151 @@
+{% extends "_shell.html" %}
+{% block title %}Rich Presence — Control Panel{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow">status_config.json</p>
+    <h1>Rich Presence</h1>
+  </div>
+</header>
+
+<section class="panel reveal" style="--delay: 60ms">
+  <div class="panel-head">
+    <h2>Rotation</h2>
+    <div class="btn-row">
+      <form method="post" action="{{ url_for('presence_toggle') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn {{ 'btn-danger-ghost' if cfg.get('running') else 'btn-primary' }}">
+          {{ 'Stop rotation' if cfg.get('running') else 'Start rotation' }}
+        </button>
+      </form>
+    </div>
+  </div>
+  <p class="panel-sub">
+    Status:
+    <span class="pill {{ 'pill-on' if cfg.get('running') else 'pill-off' }}">{{ 'running' if cfg.get('running') else 'stopped' }}</span>
+  </p>
+
+  <form method="post" action="{{ url_for('presence_interval') }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Default interval (seconds)
+      <input type="number" name="interval" min="5" value="{{ cfg.get('rotation_interval', 15) }}">
+    </label>
+    <button type="submit" class="btn btn-ghost">Update interval</button>
+  </form>
+</section>
+
+<section class="panel reveal" style="--delay: 120ms">
+  <div class="panel-head"><h2>Add a status entry</h2></div>
+  <p class="panel-sub">
+    <strong>Type</strong> controls the bot's actual Discord presence (what shows under its name).
+    <strong>Image</strong> and <strong>buttons</strong> aren't supported by Discord for bot presences directly —
+    they're used to build an optional live-updating panel embed instead (set one up with <code>,status_setpanel</code> in a channel).
+  </p>
+  <form method="post" action="{{ url_for('presence_add') }}" class="stack-form" id="presence-add-form" style="max-width: 640px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="form-row">
+      <label>Type
+        <select name="type" id="presence-type">
+          <option value="game">Playing</option>
+          <option value="watching">Watching</option>
+          <option value="listening">Listening to</option>
+          <option value="competing">Competing in</option>
+          <option value="streaming">Streaming</option>
+          <option value="custom">Custom status</option>
+        </select>
+      </label>
+      <label>Presence status
+        <select name="status">
+          <option value="online">Online</option>
+          <option value="idle">Idle</option>
+          <option value="dnd">Do Not Disturb</option>
+          <option value="invisible">Invisible</option>
+        </select>
+      </label>
+    </div>
+
+    <label id="name-label">Text
+      <input type="text" name="name" placeholder="with your servers" required>
+    </label>
+
+    <label id="stream-url-row" style="display:none;">Stream URL <span class="muted small">(twitch.tv/... or youtube.com/watch?...)</span>
+      <input type="text" name="stream_url" placeholder="https://twitch.tv/yourchannel">
+    </label>
+
+    <label id="emoji-row" style="display:none;">Emoji <span class="muted small">(unicode, or a custom &lt;a:name:id&gt; tag)</span>
+      <input type="text" name="emoji" placeholder="🎮">
+    </label>
+
+    <div class="form-row">
+      <label>Panel image URL <span class="muted small">(optional)</span>
+        <input type="text" name="image" placeholder="https://...">
+      </label>
+      <label>Interval override <span class="muted small">(seconds, optional)</span>
+        <input type="number" name="interval" min="1" placeholder="uses default above">
+      </label>
+    </div>
+
+    <p class="panel-sub" style="margin: 4px 0 0;">Panel buttons <span class="muted small">(up to 2, optional — link buttons only)</span></p>
+    <div class="form-row">
+      <label>Button 1 label
+        <input type="text" name="button1_label" placeholder="Website">
+      </label>
+      <label>Button 1 URL
+        <input type="text" name="button1_url" placeholder="https://...">
+      </label>
+    </div>
+    <div class="form-row">
+      <label>Button 2 label
+        <input type="text" name="button2_label" placeholder="Support">
+      </label>
+      <label>Button 2 URL
+        <input type="text" name="button2_url" placeholder="https://...">
+      </label>
+    </div>
+
+    <button type="submit" class="btn btn-primary" style="align-self: flex-start;">Add entry</button>
+  </form>
+</section>
+
+<script>
+  const typeSelect = document.getElementById('presence-type');
+  const streamRow = document.getElementById('stream-url-row');
+  const emojiRow = document.getElementById('emoji-row');
+  const nameLabel = document.getElementById('name-label');
+  function syncFields() {
+    const t = typeSelect.value;
+    streamRow.style.display = t === 'streaming' ? '' : 'none';
+    emojiRow.style.display = t === 'custom' ? '' : 'none';
+    nameLabel.firstChild.textContent = t === 'custom' ? 'Custom status text ' : 'Text ';
+  }
+  typeSelect.addEventListener('change', syncFields);
+  syncFields();
+</script>
+
+<section class="panel reveal" style="--delay: 180ms">
+  <div class="panel-head"><h2>Entries ({{ cfg.get('entries', [])|length }})</h2></div>
+  <div class="cog-list">
+    {% for entry in cfg.get('entries', []) %}
+    <div class="cog-row reveal-item">
+      <div class="cog-info">
+        <span class="pill pill-on">{{ entry.get('type', 'game') }}</span>
+        <span class="cog-name">{{ entry.get('name', '') }}</span>
+        <span class="mono muted small">({{ entry.get('status', 'online') }})</span>
+        {% if entry.get('image') %}<span class="pill pill-off">image</span>{% endif %}
+        {% if entry.get('buttons') %}<span class="pill pill-off">{{ entry.get('buttons')|length }} button{{ 's' if entry.get('buttons')|length != 1 else '' }}</span>{% endif %}
+        {% if entry.get('interval') %}<span class="pill pill-off mono">{{ entry.get('interval') }}s</span>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('presence_remove', index=loop.index0) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger-ghost btn-sm">Remove</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="panel-sub">No entries yet — add one above.</p>
+    {% endfor %}
+  </div>
+</section>
+
+{% endblock %}

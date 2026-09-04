@@ -1,0 +1,43 @@
+{% extends "_shell.html" %}
+{% block title %}Servers — Control Panel{% endblock %}
+{% block inner %}
+
+<header class="page-head reveal">
+  <div>
+    <p class="eyebrow">Guilds</p>
+    <h1>Servers</h1>
+  </div>
+  <span class="pill pill-on">{{ guild_list|length }} connected</span>
+</header>
+
+<section class="panel reveal" style="--delay: 40ms">
+  {% if not bot_online %}
+    <p class="panel-sub">Bot is offline — connect it to see live server data.</p>
+  {% elif not guild_list %}
+    <p class="panel-sub">Not in any servers yet.</p>
+  {% else %}
+  <div class="guild-grid">
+    {% for g in guild_list %}
+    <div class="guild-card reveal" style="--delay: {{ loop.index0 * 30 }}ms">
+      {% if g.icon_url %}
+        <img class="guild-icon" src="{{ g.icon_url }}" alt="">
+      {% else %}
+        <div class="guild-icon guild-icon-fallback">{{ g.name[0]|upper }}</div>
+      {% endif %}
+      <div class="guild-meta">
+        <span class="guild-name">{{ g.name }}</span>
+        <span class="mono muted small">{{ g.member_count }} members · owner {{ g.owner }}</span>
+      </div>
+      <a href="{{ url_for('guild_members', guild_id=g.id) }}" class="btn btn-ghost btn-sm">Members</a>
+      <form method="post" action="{{ url_for('leave_guild', guild_id=g.id) }}"
+            onsubmit="return confirm('Leave &quot;{{ g.name }}&quot;? This cannot be undone from here.');" data-async-form>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger-ghost btn-sm">Leave</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+{% endblock %}
